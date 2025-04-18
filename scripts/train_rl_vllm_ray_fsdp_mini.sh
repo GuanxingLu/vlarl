@@ -16,8 +16,6 @@ DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
 per_device_train_batch_size=1
 local_rollout_batch_size=4
-# per_device_train_batch_size=1
-# local_rollout_batch_size=1
 
 # GPU allocation
 GPUS=${1:-"0,1,2,3"}
@@ -36,7 +34,6 @@ echo "ACTOR_GPUS=${ACTOR_GPUS}"
 echo "per_device_train_batch_size=${per_device_train_batch_size}"
 echo "local_rollout_batch_size=${local_rollout_batch_size}"
 
-# Redirect both stdout and stderr to the log file
 CUDA_VISIBLE_DEVICES=$GPUS python \
     ppo_vllm_thread_ray_fsdp_vla_v3.py \
     --vla_path "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \

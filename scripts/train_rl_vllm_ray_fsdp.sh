@@ -48,7 +48,6 @@ echo "ACTOR_GPUS=${ACTOR_GPUS}"
 echo "per_device_train_batch_size=${per_device_train_batch_size}"
 echo "local_rollout_batch_size=${local_rollout_batch_size}"
 
-
 CUDA_VISIBLE_DEVICES=$GPUS python \
     ppo_vllm_thread_ray_fsdp_vla_v3.py \
     --vla_path "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
