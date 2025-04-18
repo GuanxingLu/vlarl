@@ -33,10 +33,18 @@ Before launching distributed training, please edit the script with the appropria
 
 ### 📈 Training
 
+For PPO:
 ```bash
 # bash scripts/train_rl_vllm_ray_fsdp.sh <gpus> <task_ids>
 # e.g., 
 bash scripts/train_rl_vllm_ray_fsdp.sh 0,1 0,1,2,3,4,5,6,7,8,9
+```
+
+For GRPO:
+```bash
+# bash scripts/train_grpo_vllm_ray_fsdp.sh <gpus> <task_ids>
+# e.g., 
+bash scripts/train_grpo_vllm_ray_fsdp.sh 0,1 0,1,2,3,4,5,6,7,8,9
 ```
 
 ### 🧪 Evaluation

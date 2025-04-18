@@ -295,11 +295,11 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         if self.model_family == "openvla":
             normalized_action = invert_gripper_action(normalized_action)
         # Execute the action in the environment
-        # valid_ids = [idx for idx in range(self.env_num) if idx not in invalid_ids]
         valid_task_ids = [idx for idx in range(self.env_num) if self.initial_state_ids[idx] != -1]   # skip the task if no more initial state to reset
         id_to_task_id = {idx: task_id for idx, task_id in enumerate(valid_task_ids)}    # map from valid index (e.g., 0, 1, 2) to task_id (e.g., 2, 5, 10)
 
-        obs_np_list, reward_np_list, done_np_list, info = self.env.step(normalized_action.tolist(), id=valid_task_ids)
+        specified_ids = kwargs.get("id", None)
+        obs_np_list, reward_np_list, done_np_list, info = self.env.step(normalized_action.tolist(), id=valid_task_ids if specified_ids is None else specified_ids)
         # obs_np_list: [len(valid_ids), 256, 256, 3]
         # ['robot0_joint_pos', 'robot0_joint_pos_cos', 'robot0_joint_pos_sin', 'robot0_joint_vel', 'robot0_eef_pos', 'robot0_eef_quat', 'robot0_gripper_qpos', 'robot0_gripper_qvel', 'agentview_image', 'robot0_eye_in_hand_image', 'porcelain_mug_1_pos', 'porcelain_mug_1_quat', 'porcelain_mug_1_to_robot0_eef_pos', 'porcelain_mug_1_to_robot0_eef_quat', 'red_coffee_mug_1_pos', 'red_coffee_mug_1_quat', 'red_coffee_mug_1_to_robot0_eef_pos', 'red_coffee_mug_1_to_robot0_eef_quat', 'plate_1_pos', 'plate_1_quat', 'plate_1_to_robot0_eef_pos', 'plate_1_to_robot0_eef_quat', 'chocolate_pudding_1_pos', 'chocolate_pudding_1_quat', 'chocolate_pudding_1_to_robot0_eef_pos', 'chocolate_pudding_1_to_robot0_eef_quat', 'robot0_proprio-state', 'object-state']
 
