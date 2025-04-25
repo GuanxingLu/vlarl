@@ -52,6 +52,8 @@ import logging
 from queue import Empty, Queue
 from typing import Any, Callable, Iterator, List, Literal, Optional, Tuple, Dict, Union
 from copy import deepcopy
+from contextlib import nullcontext
+from functools import partial
 
 import torch
 import torch.distributed as dist
@@ -754,7 +756,8 @@ class PolicyTrainerRayProcess(RayProcess):
                 batch_names = param_names[batch_start:batch_end]
                 
                 # For this batch only, summon full parameters
-                with FSDP.summon_full_params(model, writeback=False):   # this takes up a lot of memory
+                gather_if_zero3 = partial(FSDP.summon_full_params, writeback=False) if world_size > 1 else nullcontext
+                with gather_if_zero3(model):   # this takes up a lot of memory
                     if is_peft_model(model):
                         # Create a modified copy of the model for broadcasting
                         # instead of directly modifying the original model
@@ -1136,6 +1139,7 @@ class PolicyTrainerRayProcess(RayProcess):
                     # Initialize rewards and dones tensors
                     local_rewards = torch.zeros(args.local_rollout_batch_size, device=device, dtype=torch.float32)
                     local_dones = torch.zeros(args.local_rollout_batch_size, device=device, dtype=torch.float32)
+                    step_count_tmp = torch.zeros(args.local_rollout_batch_size, device=device, dtype=torch.float32)
                     
                     # Update only active env values directly
                     for i, idx in enumerate(active_indices.cpu().numpy()):
@@ -1143,7 +1147,7 @@ class PolicyTrainerRayProcess(RayProcess):
                         local_obs["pixel_values"][idx] = active_obs["pixel_values"][i]
                         local_rewards[idx] = torch.tensor(active_rewards[i], device=device, dtype=torch.float32)
                         local_dones[idx] = torch.tensor(active_dones[i], device=device, dtype=torch.float32)
-                    
+                        step_count_tmp[idx] = active_infos["step_count_tmp"][i]
                 else:
                     logger.info("All environments are done, breaking out of rollout loop")
                     break
@@ -1177,7 +1181,7 @@ class PolicyTrainerRayProcess(RayProcess):
                 for i in range(args.local_rollout_batch_size):
                     if local_dones[i] and active_mask[i]:
                         episodic_returns.append(local_rewards[i].item())
-                        # episodic_lengths.append(active_infos["step_count_tmp"][i])
+                        episodic_lengths.append(step_count_tmp[i].item())
 
                 local_token_obs["input_ids"] = local_token_obs["input_ids"].to(dtype=torch.long)
                 queries_next = local_token_obs["input_ids"]
@@ -1211,6 +1215,7 @@ class PolicyTrainerRayProcess(RayProcess):
             logger.info(f"{mean_grouped_returns=}")
             logger.info(f"{std_grouped_returns=}")
             logger.info(f"{advantages=}")
+            logger.info(f"{dones=}")
             torch.cuda.empty_cache()
 
             # flatten the batch: [num_steps, num_envs, ...] -> [num_steps * num_envs, ...]

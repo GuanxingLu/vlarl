@@ -59,7 +59,8 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         cprint(f"[DEBUG] GPU IDs: {self.gpu_ids}", "yellow")
 
         self.num_tasks_per_suite = cfg.num_tasks_per_suite
-        self.env_num = min(cfg.n_rollout_threads, self.num_tasks_per_suite)
+        # self.env_num = min(cfg.n_rollout_threads, self.num_tasks_per_suite)
+        self.env_num = cfg.n_rollout_threads
         self.task_ids = getattr(cfg, "task_ids", None)
         self.max_env_length = cfg.max_env_length
         self.num_steps_wait = cfg.num_steps_wait
@@ -70,7 +71,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         self.cfg = cfg
         self.mode = mode
         assert mode in ["train", "eval"], f"Invalid mode: {mode}"
-        self.n_agents = 1  # Number of agents (default: 1) NOT USED
 
         # Initialize LIBERO task suite
         self.benchmark_dict = benchmark.get_benchmark_dict()
@@ -95,7 +95,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         self.env = None
         self.task_descriptions = None
         self.initial_states = None
-        self.current_lang_state = None
         self.success = None
         self.total_episodes = 0
         self.last_obs_np_list = None
@@ -254,7 +253,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         prompt_list = self.task_descriptions
         img_list, prompt_list = preprocess_input_batch(img_list, prompt_list, pre_thought_list=None, center_crop=self.center_crop)
 
-        self.current_lang_state = prompt_list
         self.step_count = np.zeros(self.env_num)
         self.success = np.zeros(self.env_num, dtype=bool)
 
@@ -414,8 +412,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         img_list, prompt_list = preprocess_input_batch(img_list, prompt_list, pre_thought_list=None, center_crop=self.center_crop)
 
         next_obs = EnvOutput(pixel_values=img_list, prompts=prompt_list)
-
-        self.current_lang_state = prompt_list
 
         infos = {
             "task_description": self.task_descriptions,
