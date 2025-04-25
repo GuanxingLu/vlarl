@@ -5,6 +5,9 @@ The following guidance works well for a machine with 3090 GPU | cuda 12.1 | ubun
 For possible errors, please see [ERROR_CATCH.md](ERROR_CATCH.md). If you encounter any other problem, feel free to open an issue.
 
 ```bash
+# Install ubuntu dependencies
+apt-get -y update && apt-get install -y cmake libegl-dev
+
 # Conda environment setup
 conda create -n vlarl python=3.10
 conda activate vlarl
