@@ -1471,7 +1471,7 @@ class PolicyTrainerRayProcess(RayProcess):
                             gradient_accumulation_idx += 1
                         minibatch_idx += 1
                         # fmt: off
-                        del mb_advantage, mb_responses, mb_query_responses, mb_logprobs, mb_return, mb_values
+                        del mb_advantage, mb_responses, mb_query_responses, mb_return, mb_values
                         if training_step > args.value_init_steps:
                             del new_logprobs, logprobs_diff, ratio, pg_losses, pg_losses2, pg_loss
                         if args.use_value_model:
