@@ -24,12 +24,12 @@ DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
 
 # Total 2 A100 GPUs
-# per_device_train_batch_size=16
-# local_rollout_batch_size=10
+per_device_train_batch_size=16
+local_rollout_batch_size=10
 
 # Total 8 3090 GPUs
-per_device_train_batch_size=1
-local_rollout_batch_size=1
+# per_device_train_batch_size=1
+# local_rollout_batch_size=1
 
 # GPU allocation
 GPUS=${1:-"0,1,2,3"}
@@ -66,10 +66,10 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --temperature 1.0 \
     --num_epochs 1 \
     --value_init_steps 5 \
-    --learning_rate 5e-6 \
+    --learning_rate 2e-6 \
     --value_learning_rate 1e-4 \
     --max_grad_norm 1.0 \
-    --num_steps 4 \
+    --num_steps 128 \
     --max_env_length 128 \
     --total_episodes 100000 \
     --vllm_tensor_parallel_size 1 \
