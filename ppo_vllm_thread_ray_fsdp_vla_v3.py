@@ -1213,7 +1213,7 @@ class PolicyTrainerRayProcess(RayProcess):
                         start_time = time.time()
                         if args.use_value_model:
                             with timer.timer("value"):
-                                value = get_reward(self.value_model, query, pixel_value[:, :3, :, :], args.pad_token_id)
+                                value = get_reward(self.value_model, query, pixel_value, args.pad_token_id)
                         else:
                             value = torch.zeros(args.local_rollout_forward_batch_size, device=device)
                         torch.cuda.empty_cache()
@@ -1309,7 +1309,7 @@ class PolicyTrainerRayProcess(RayProcess):
                         query = queries_next[i : i + args.local_rollout_forward_batch_size]
                         pixel_value = pixel_values_next[i : i + args.local_rollout_forward_batch_size]
                         with torch.no_grad():
-                            next_value[i : i + args.local_rollout_forward_batch_size] = get_reward(self.value_model, query, pixel_value[:, :3, :, :], args.pad_token_id)
+                            next_value[i : i + args.local_rollout_forward_batch_size] = get_reward(self.value_model, query, pixel_value, args.pad_token_id)
                 else:
                     next_value = torch.zeros(args.local_rollout_batch_size, device=device)
 
@@ -1371,7 +1371,7 @@ class PolicyTrainerRayProcess(RayProcess):
 
                             if args.use_value_model:
                                 vpred = get_reward(
-                                    self.value_model, mb_queries, mb_pixel_values[:, :3, :, :], args.pad_token_id
+                                    self.value_model, mb_queries, mb_pixel_values, args.pad_token_id
                                 )
                                 vpredclipped = torch.clamp(
                                     vpred,
