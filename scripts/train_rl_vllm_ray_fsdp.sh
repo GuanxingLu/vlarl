@@ -54,7 +54,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --data_root_dir ./data/modified_libero_rlds \
     --dataset_name ${DATA_ROOT} \
     --task_suite_name ${DATA_NAME} \
-    --num_trials_per_task 1 \
+    --num_trials_per_task 50 \
     --run_root_dir "checkpoints/${DATA_ROOT}/root" \
     --adapter_tmp_dir "checkpoints/${DATA_ROOT}/adapter" \
     --per_device_train_batch_size ${per_device_train_batch_size} \
@@ -63,10 +63,10 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --local_rollout_forward_batch_size ${local_rollout_batch_size} \
     --actor_num_gpus_per_node "[${ACTOR_GPUS}]" \
     --task_ids "[${TASK_IDS}]" \
-    --temperature 1.0 \
+    --temperature 2.7 \
     --num_epochs 1 \
     --value_init_steps 5 \
-    --learning_rate 2e-6 \
+    --learning_rate 5e-6 \
     --value_learning_rate 1e-4 \
     --max_grad_norm 1.0 \
     --num_steps 128 \
@@ -76,7 +76,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --vllm_enforce_eager True \
     --enable_prefix_caching False \
     --gpu_memory_utilization 0.9 \
-    --use_lora True \
+    --use_lora False \
     --enable_gradient_checkpointing False \
     --sharding_strategy "full-shard" \
     --offload False \

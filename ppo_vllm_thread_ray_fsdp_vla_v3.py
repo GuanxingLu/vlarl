@@ -1430,7 +1430,6 @@ class PolicyTrainerRayProcess(RayProcess):
 
                                 with torch.no_grad():
                                     approxkl = ((-logprobs_diff).exp() - 1 + logprobs_diff).mean()  # kl3
-                                    # logger.info(f"{approxkl=}")
                                     if approxkl > args.max_approx_kl or torch.isnan(approxkl):
                                         logger.info("--------------------------------")
                                         logger.info(f"Stopping training due to high KL divergence: {approxkl=}, {approxkl.dtype=}")
