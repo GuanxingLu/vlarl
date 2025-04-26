@@ -76,7 +76,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --vllm_enforce_eager True \
     --enable_prefix_caching False \
     --gpu_memory_utilization 0.9 \
-    --use_lora False \
+    --use_lora True \
     --enable_gradient_checkpointing False \
     --sharding_strategy "full-shard" \
     --offload False \
