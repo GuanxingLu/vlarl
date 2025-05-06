@@ -431,6 +431,7 @@ def calculate_runtime_args(args: Args,):
 
     exp_id = (
         f"ppo+{args.dataset_name}"
+        f"+tasks{np.unique(args.task_ids).size}"
         f"+trials{args.num_trials_per_task}"
         f"+ns{args.num_steps}"
         f"+maxs{args.max_env_length}"
