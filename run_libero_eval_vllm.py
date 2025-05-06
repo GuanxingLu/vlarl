@@ -160,18 +160,6 @@ def eval_libero(cfg: GenerateConfig) -> None:
     # [OpenVLA] Set action un-normalization key
     cfg.unnorm_key = cfg.task_suite_name
 
-    norm_stats = None
-    # if cfg.load_adapter_checkpoint is not None:
-    #     # with open(run_dir / "latest_checkpoint_step.txt", "r") as f:
-    #     #     resume_iteration = int(f.read())
-    #     # start_gradient_step_idx = resume_iteration + 1
-    #     # print(f"Resuming training from iteration {resume_iteration} ...")
-
-    #     dataset_statistics_path = os.path.join(cfg.load_adapter_checkpoint, "dataset_statistics.json")  # HACK: overwrite dataset_statistics
-    #     if os.path.isfile(dataset_statistics_path):
-    #         with open(dataset_statistics_path, "r") as f:
-    #             norm_stats = json.load(f)
-
     # Load model
     max_len = 256 + 50
     vllm_engines = create_vllm_engines(
@@ -276,7 +264,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
     # max_pet_name_len = len("openvla-7b")
     # model_pet_name = cfg.pretrained_checkpoint.split('/')[-1][:max_pet_name_len]
     model_pet_name = cfg.load_adapter_checkpoint.split('/')[-1] if cfg.load_adapter_checkpoint else cfg.pretrained_checkpoint.split('/')[-1]
-    run_id = f"EVAL-{cfg.task_suite_name}-{model_pet_name}-s-{cfg.seed}"
+    run_id = f"EVAL-{cfg.task_suite_name}-{model_pet_name}-t-{cfg.temperature}-s-{cfg.seed}"
     if cfg.run_id_note is not None:
         run_id += f"--{cfg.run_id_note}"
     local_log_dir = os.path.join(cfg.local_log_dir, run_id)

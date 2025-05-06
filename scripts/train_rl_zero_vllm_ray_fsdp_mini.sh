@@ -1,35 +1,21 @@
 #!/bin/bash
-# Usage: bash scripts/train_rl_vllm_ray_fsdp.sh <gpus> <task_ids>
-# Example: bash scripts/train_rl_vllm_ray_fsdp.sh 2,3,4,5,6,7 0,1,2,3,4,5,6,7,8,9
-# Expectation: more than 2 A100 GPUs; 6 GPUs for RTX 3090s backward, but the second broadcast will oom
-# Explanation:
-# Rollout phase: num_envs = local_rollout_batch_size * world_size
-# e.g. 2 GPUs, local_rollout_batch_size = 1, num_envs = 1 * 2 = 2
-# Training phase: num_mini_batches = local_rollout_batch_size * num_steps / local_mini_batch_size
-# e.g. 2 GPUs, local_rollout_batch_size = 1, num_steps = 128, local_mini_batch_size = 8, num_mini_batches = 1 * 128 / 8 = 16
+# Usage: bash scripts/train_rl_vllm_ray_fsdp_mini.sh <gpus> <task_ids>
+# Example: bash scripts/train_rl_vllm_ray_fsdp_mini.sh 2,3,4,5,6,7 0,1,2,3,4,5,6,7,8,9
 # ================================
 
 # export NCCL_P2P_DISABLE=1
+# export NCCL_IB_DISABLE=1
 # export NCCL_BUFFSIZE=67108864   # 64MiB, default is 4MiB
-# export RAY_DEDUP_LOGS=0 # log all ray instances
+export RAY_DEDUP_LOGS=0 # log all ray instances
 export MESA_GL_VERSION_OVERRIDE=4.1
 export PYOPENGL_PLATFORM=egl
 
 # data
 POSTFIX=spatial
-# POSTFIX=goal
-# POSTFIX=object
-# POSTFIX=10
 DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
-
-# Total 2 A100 GPUs
-per_device_train_batch_size=16
-local_rollout_batch_size=10
-
-# Total 8 3090 GPUs
-# per_device_train_batch_size=1
-# local_rollout_batch_size=1
+per_device_train_batch_size=1
+local_rollout_batch_size=4
 
 # GPU allocation
 GPUS=${1:-"0,1,2,3"}
@@ -50,24 +36,23 @@ echo "local_rollout_batch_size=${local_rollout_batch_size}"
 
 CUDA_VISIBLE_DEVICES=$GPUS python \
     ppo_vllm_thread_ray_fsdp_vla_v3.py \
-    --vla_path "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
+    --vla_path "MODEL/openvla-7b" \
     --data_root_dir ./data/modified_libero_rlds \
     --dataset_name ${DATA_ROOT} \
     --task_suite_name ${DATA_NAME} \
-    --num_trials_per_task 50 \
-    --run_root_dir "checkpoints/${DATA_ROOT}/root" \
-    --adapter_tmp_dir "checkpoints/${DATA_ROOT}/adapter" \
+    --num_trials_per_task 1 \
+    --run_root_dir "checkpoints/debug/root" \
+    --adapter_tmp_dir "checkpoints/debug/adapter" \
     --per_device_train_batch_size ${per_device_train_batch_size} \
     --local_mini_batch_size ${per_device_train_batch_size} \
     --local_rollout_batch_size ${local_rollout_batch_size} \
     --local_rollout_forward_batch_size ${local_rollout_batch_size} \
     --actor_num_gpus_per_node "[${ACTOR_GPUS}]" \
     --task_ids "[${TASK_IDS}]" \
-    --temperature 2.7 \
+    --temperature 2.0 \
     --num_epochs 1 \
-    --value_init_steps 5 \
-    --learning_rate 5e-6 \
-    --value_learning_rate 1e-4 \
+    --learning_rate 2e-6 \
+    --value_learning_rate 5e-4 \
     --max_grad_norm 1.0 \
     --num_steps 128 \
     --max_env_length 128 \
@@ -80,14 +65,14 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --enable_gradient_checkpointing False \
     --sharding_strategy "full-shard" \
     --offload False \
-    --use_value_model True \
+    --use_value_model False \
     --value_model_type "vla" \
     --value_use_lora False \
-    --norm_adv False \
-    --save_freq 10 \
+    --norm_adv True \
+    --save_freq 10000 \
     --save_video True \
-    --use_wandb True \
+    --use_wandb False \
     --wandb_offline False \
     --wandb_project openvla \
     --wandb_entity openvla_cvpr \
-    --debug False
+    --debug True

@@ -54,7 +54,7 @@ dependencies = [
     "tensorflow",
     "tensorflow_datasets",
     "tensorflow_graphics",
-    "dlimp @ git+https://github.com/moojink/dlimp_openvla",
+    "dlimp @ git+ssh://git@github.com/moojink/dlimp_openvla",
     "pyzmq",
     "vllm==0.7.2",
     "ray==2.40.0",
