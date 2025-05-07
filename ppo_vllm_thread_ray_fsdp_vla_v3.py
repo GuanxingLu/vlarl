@@ -947,7 +947,7 @@ class PolicyTrainerRayProcess(RayProcess):
             resume_training_step: int,
         ):
             llm = vllm_engines[0]
-            for training_step in range(resume_training_step, num_training_steps):
+            while True:
                 g_queries_list = param_prompt_Q.get()
                 if g_queries_list is None:
                     break
