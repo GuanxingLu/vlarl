@@ -1233,15 +1233,14 @@ class PolicyTrainerRayProcess(RayProcess):
 
                         # Compute a score using the reward model
                         # score = torch.zeros(query.shape[0], device=device)
-                        # score += global_rewards[i : i + args.local_rollout_forward_batch_size]
                         # if args.process_reward_model:
-                        #     processed_score = get_reward(self.reward_model, postprocessed_query_response, args.pad_token_id, context_length)
+                        #     processed_score = get_reward(self.reward_model, query_response, args.pad_token_id, context_length)
                         #     score += processed_score
                         
                         # Accumulate rollout data
                         # logprobs[step, i : i + args.local_rollout_forward_batch_size] = logprob
-                        # scores[step, i : i + args.local_rollout_forward_batch_size] = score
-                        values[step, i : i + args.local_rollout_forward_batch_size] = value
+                        # scores[step, i : i + args.local_rollout_forward_batch_size] += score
+                        values[step, i : i + args.local_rollout_forward_batch_size] += value
 
                     del query, response, pixel_value
                     gc.collect()
@@ -1281,7 +1280,7 @@ class PolicyTrainerRayProcess(RayProcess):
 
                 local_rewards = torch.tensor(local_rewards, device=device, dtype=torch.float32)
                 local_dones = torch.tensor(local_dones, device=device, dtype=torch.float32)
-                scores[step] = local_rewards
+                scores[step] += local_rewards
 
                 # compute episodic reward
                 for i in range(args.local_rollout_batch_size):

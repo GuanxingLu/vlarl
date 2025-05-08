@@ -205,6 +205,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 "camera_heights": resolution,
                 "camera_widths": resolution,
                 "render_gpu_device_id": assigned_gpu,  # Assign specific GPU
+                "reward_shaping": True,
             }
             # cprint(f"[DEBUG] Env {id} assigned to GPU {assigned_gpu}", "yellow")
             # cprint(f"[DEBUG] Env args: {env_args}", "yellow")
@@ -326,6 +327,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                     # "goal": self.task_descriptions[idx],
                     "step": self.step_count[idx],
                     "tokens": action[idx],
+                    "reward": reward_np_list[idx],
                     "prob": probs[idx] if probs is not None else None,
                     "value_preds": values[idx] if values is not None else None,
                     "prm_rewards": prm_rewards[idx] if prm_rewards is not None else None,
