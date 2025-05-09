@@ -1239,10 +1239,10 @@ class PolicyTrainerRayProcess(RayProcess):
                         
                         # Accumulate rollout data
                         # logprobs[step, i : i + args.local_rollout_forward_batch_size] = logprob
-                        # scores[step, i : i + args.local_rollout_forward_batch_size] += score
-                        values[step, i : i + args.local_rollout_forward_batch_size] += value
+                        # scores[step, i : i + args.local_rollout_forward_batch_size] = score
+                        values[step, i : i + args.local_rollout_forward_batch_size] = value
 
-                    del query, response, pixel_value
+                    del query, response, pixel_value, value
                     gc.collect()
                     torch.cuda.empty_cache()
 
