@@ -1280,7 +1280,7 @@ class PolicyTrainerRayProcess(RayProcess):
 
                 local_rewards = torch.tensor(local_rewards, device=device, dtype=torch.float32)
                 local_dones = torch.tensor(local_dones, device=device, dtype=torch.float32)
-                scores[step] += local_rewards
+                scores[step] = local_rewards
 
                 # compute episodic reward
                 for i in range(args.local_rollout_batch_size):
@@ -1483,7 +1483,7 @@ class PolicyTrainerRayProcess(RayProcess):
             # Update metrics
             # logger.info("start metrics")
             with torch.no_grad():
-                local_metrics["objective/entropy"] = (-logprobs).sum(1).mean()
+                local_metrics["objective/entropy"] = (-b_logprobs).sum(1).mean()
                 local_metrics["objective/entropy_vllm"] = (-vllm_logprobs).sum(1).mean()
                 local_metrics["objective/scores"] = scores.mean()
                 local_metrics["objective/scores_std"] = scores.std() if scores.shape[0] > 1 else torch.tensor(0, device=device)
