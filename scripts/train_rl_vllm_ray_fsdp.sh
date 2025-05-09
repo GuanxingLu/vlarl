@@ -65,9 +65,9 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --task_ids "[${TASK_IDS}]" \
     --temperature 2.7 \
     --num_epochs 1 \
-    --value_init_steps 3 \
-    --learning_rate 1e-5 \
-    --value_learning_rate 1e-4 \
+    --value_init_steps 5 \
+    --learning_rate 5e-6 \
+    --value_learning_rate 5e-5 \
     --max_grad_norm 1.0 \
     --num_steps 128 \
     --max_env_length 150 \
