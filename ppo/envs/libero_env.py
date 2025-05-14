@@ -206,6 +206,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 "camera_widths": resolution,
                 "render_gpu_device_id": assigned_gpu,  # Assign specific GPU
                 "reward_shaping": True,
+                # "reward_shaping": False,
             }
             # cprint(f"[DEBUG] Env {id} assigned to GPU {assigned_gpu}", "yellow")
             # cprint(f"[DEBUG] Env args: {env_args}", "yellow")

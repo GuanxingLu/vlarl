@@ -1285,7 +1285,7 @@ class PolicyTrainerRayProcess(RayProcess):
                 # compute episodic reward
                 for i in range(args.local_rollout_batch_size):
                     if local_dones[i]:
-                        episodic_returns.append(local_rewards[i].item())
+                        episodic_returns.append(1.0 if local_rewards[i].item() > 0 else 0.0)
                         episodic_lengths.append(local_infos["step_count_tmp"][i])
 
                 local_token_obs["input_ids"] = local_token_obs["input_ids"].to(dtype=torch.long)

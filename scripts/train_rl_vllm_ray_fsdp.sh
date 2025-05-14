@@ -16,10 +16,10 @@ export MESA_GL_VERSION_OVERRIDE=4.1
 export PYOPENGL_PLATFORM=egl
 
 # data
-POSTFIX=spatial
+# POSTFIX=spatial
 # POSTFIX=goal
 # POSTFIX=object
-# POSTFIX=10
+POSTFIX=10
 DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
 
