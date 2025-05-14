@@ -272,8 +272,10 @@ class Args:
     """Ratio of warmup steps to total steps (takes precedence over `policy_warm_up_steps`)"""
     value_warmup_ratio: float = 0.0
     """Ratio of warmup steps to total steps (takes precedence over `value_warm_up_steps`)"""
-    max_grad_norm: float = 1.0
-    """The maximum gradient norm"""
+    policy_max_grad_norm: float = 1.0
+    """The maximum gradient norm for the policy"""
+    value_max_grad_norm: float = 1.0
+    """The maximum gradient norm for the value"""
     max_approx_kl: float = 1e8
     """The maximum KL divergence"""
 
@@ -1237,6 +1239,8 @@ class PolicyTrainerRayProcess(RayProcess):
                         torch.cuda.empty_cache()
                         logger.info(f"Value time: {time.time() - start_time} seconds")
 
+                        logger.info(f"{value=}")
+
                         # TODO: Argh... this is redundant with vllm logprobs. Try to remove it.
                         # start_time = time.time()
                         # with timer.timer("forward"):
@@ -1269,19 +1273,19 @@ class PolicyTrainerRayProcess(RayProcess):
                 }
                 logger.info(f"🕹️🕹️🕹️ Env {step=}")
                 with timer.timer("env_step"):
+                    logger.info(f"{values[step]=}")
+
                     local_obs, local_rewards, local_dones, local_infos = train_envs.step(
                         local_actions, 
                         values=values[step].detach().cpu().numpy(), 
                         log_probs=vllm_logprobs[step].detach().cpu().numpy()
                     )
-
-                # Check for curriculum stats in local_infos
+                
+                # Store curriculum statistics if available
                 if "curriculum_stats" in local_infos:
-                    global_metrics = {}
-                    for k, v in local_infos["curriculum_stats"].items():
-                        global_metrics[f"curriculum/{k}"] = v
-                    for k, v in global_metrics.items():
-                        metrics_queue.put(({k: v}, global_step))
+                    curriculum_stats = local_infos["curriculum_stats"]
+                    for stat_key, stat_value in curriculum_stats.items():
+                        local_metrics[f"curriculum/{stat_key}"] = torch.tensor(stat_value, device=device)
                 
                 processed_obs = process_with_padding_side(processor, local_obs["prompts"], local_obs["pixel_values"], padding=True, padding_side=padding_side).to(device, dtype=torch.float32)
                 local_token_obs["input_ids"][:, :processed_obs["input_ids"].shape[1]] = processed_obs["input_ids"]
@@ -1365,6 +1369,9 @@ class PolicyTrainerRayProcess(RayProcess):
             b_returns = returns.reshape(-1)
             b_values = values.reshape(-1)
 
+            # logger.info(f"{scores.shape=}, {scores=}")
+            # logger.info(f"{b_returns.shape=}, {b_returns=}")
+
             # Training phase
             log_gpu_memory_usage("[Training] Before training", rank=accelerator.process_index, logger=logger, level=logging.INFO)
             self.model.train()
@@ -1412,13 +1419,16 @@ class PolicyTrainerRayProcess(RayProcess):
                                     vf_loss = 0.5 * vf_loss_max.mean() * args.vf_coef
                                 else:
                                     vf_loss = 0.5 * vf_losses1.mean() * args.vf_coef
-                                
+
                                 self.value_optimizer.zero_grad()
                                 vf_loss.backward()
                                 if isinstance(self.value_model, FSDP):
-                                    value_grad_norm = self.value_model.clip_grad_norm_(max_norm=args.max_grad_norm)
+                                    value_grad_norm = self.value_model.clip_grad_norm_(max_norm=args.value_max_grad_norm)
                                 else:
-                                    value_grad_norm = torch.nn.utils.clip_grad_norm_(self.value_model.parameters(), max_norm=args.max_grad_norm)
+                                    value_grad_norm = torch.nn.utils.clip_grad_norm_(self.value_model.parameters(), max_norm=args.value_max_grad_norm)
+
+                                logger.info(f"{vf_loss=}, {value_grad_norm=}")
+
                                 self.value_optimizer.step()
                                 self.value_scheduler.step()
 
@@ -1474,10 +1484,12 @@ class PolicyTrainerRayProcess(RayProcess):
                                         logger.info(f"Passed! {approxkl=}")
 
                                 if isinstance(self.model, FSDP):
-                                    policy_grad_norm = self.model.clip_grad_norm_(max_norm=args.max_grad_norm)
+                                    policy_grad_norm = self.model.clip_grad_norm_(max_norm=args.policy_max_grad_norm)
                                 else:
-                                    policy_grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=args.max_grad_norm)
-                                # logger.info(f"Policy gradient norm: {policy_grad_norm}")
+                                    policy_grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=args.policy_max_grad_norm)
+                                
+                                logger.info(f"{pg_loss=}, {policy_grad_norm=}")
+                        
                                 self.policy_optimizer.step()
                                 self.policy_scheduler.step()
                             with torch.no_grad():
@@ -1542,14 +1554,6 @@ class PolicyTrainerRayProcess(RayProcess):
                     "objective/episodic_length": sum(episodic_lengths)/len(episodic_lengths) if len(episodic_lengths) > 0 else 0,
                 }
             )
-            
-            # Add curriculum stats to metrics if available
-            if "curriculum_stats" in local_infos:
-                curriculum_stats = {}
-                for k, v in local_infos["curriculum_stats"].items():
-                    curriculum_stats[f"curriculum/{k}"] = v
-                global_metrics.update(curriculum_stats)
-            
             # Update metrics dictionary
             metrics = {
                 "episode": episode,

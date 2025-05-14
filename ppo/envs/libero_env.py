@@ -170,7 +170,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         Calculate success rate for a task-state pair.
         
         Args:
-            task_id: ID of the task
+            task_id: ID of the task (the actual task ID, not the environment index)
             state_id: ID of the initial state
             
         Returns:
@@ -190,7 +190,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         Update success tracker with the latest result.
         
         Args:
-            task_id: ID of the task
+            task_id: ID of the task (the actual task ID, not the environment index)
             state_id: ID of the initial state
             success: Whether the task was successful (True/False)
         """
@@ -207,27 +207,30 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         if len(history) > self.success_history_window:
             history.pop(0)
 
-    def _sample_task_state_curriculum(self, task_id):
+    def _sample_task_state_curriculum(self, task_idx):
         """
         Sample an initial state for a task using curriculum learning.
         
         Args:
-            task_id: ID of the task
+            task_idx: Index of the task in the environments
             
         Returns:
             int: Selected state ID
         """
-        task_initial_states = self.initial_states_list[task_id]
+        # Get the actual task ID value from the task object
+        actual_task_id = self.tasks[task_idx].id if hasattr(self.tasks[task_idx], 'id') else task_idx
+        
+        task_initial_states = self.initial_states_list[task_idx]
         state_ids = list(range(len(task_initial_states)))
         
         # If task not in tracker yet, use uniform sampling
-        if task_id not in self.success_tracker:
+        if actual_task_id not in self.success_tracker:
             return random.choice(state_ids)
         
         # Calculate sampling weights (lower success rate = higher weight)
         weights = []
         for state_id in state_ids:
-            success_rate = self._get_success_rate(task_id, state_id)
+            success_rate = self._get_success_rate(actual_task_id, state_id)
             
             # Weight inversely proportional to success rate, with temperature
             weight = (1.0 - success_rate) ** (1.0 / self.curriculum_temp)
@@ -366,7 +369,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
 
         self.last_obs_np_list = obs_np_list
         self.replay_images = {task_idx: [] for task_idx in range(self.env_num)}
-        # self.replay_values = {task_idx: [] for task_idx in range(self.env_num)}
 
         if self.save_video: # we only save video for the first environmen
             self.save_dir = os.path.join(self.exp_dir, "rollouts")
@@ -440,8 +442,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 }
                 img = add_info_board(img, **img_args)
                 self.replay_images[idx].append(img)
-                # if values is not None:
-                #     self.replay_values[idx].append(values[idx])
 
         # Logging & Resetting
         if np.any(dones):
@@ -456,12 +456,14 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
             for i, task_id in enumerate(done_task_indices):
                 # Update success tracker and log results
                 done_idx = done_indices[i]
-                success = reward_np_list[done_idx] > 0
+                success = reward_np_list[done_idx] >= 1.0
                 
                 if self.mode == "train" and self.use_curriculum:
                     # Update success tracker with this episode's result
                     current_state_id = self.initial_state_ids[task_id]
-                    self._update_success_tracker(task_id, current_state_id, success)
+                    # Get the actual task ID value from the task object
+                    actual_task_id = self.tasks[task_id].id if hasattr(self.tasks[task_id], 'id') else task_id
+                    self._update_success_tracker(actual_task_id, current_state_id, success)
                 
                 # Log results
                 status = "successfully" if success else "failed to"
@@ -471,7 +473,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 # Save video for done environments if enabled
                 if self.save_video:
                     done_idx = done_indices[i]
-                    success = reward_np_list[done_idx] > 0
+                    success = reward_np_list[done_idx] >= 1.0
                     processed_task_description = self.task_descriptions[done_idx].lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
                     mp4_path = os.path.join(
                         self.save_dir, f"rank_{self.env_gpu_id}--episode={self.total_episodes + i}--success={success}--task={processed_task_description}.mp4"

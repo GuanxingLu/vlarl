@@ -69,8 +69,9 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --value_init_steps 5 \
     --learning_rate 5e-5 \
     --value_learning_rate 1e-4 \
-    --max_grad_norm 1.0 \
-    --num_steps 128 \
+    --policy_max_grad_norm 1.0 \
+    --value_max_grad_norm 5.0 \
+    --num_steps 64 \
     --max_env_length 150 \
     --total_episodes 100000 \
     --vllm_tensor_parallel_size 1 \
@@ -90,7 +91,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --curriculum_temp 0.5 \
     --curriculum_min_prob 0.05 \
     --success_history_window 10 \
-    --curriculum_recompute_freq 20 \
+    --curriculum_recompute_freq 10 \
     --save_freq 20 \
     --save_video True \
     --use_wandb True \

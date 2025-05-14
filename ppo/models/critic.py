@@ -60,7 +60,15 @@ class CriticVLA(nn.Module):
             pixel_values,
             **kwargs,
         ):
+        """
+        input_ids: [B, L], e.g. [2, 292]
+        attention_mask: [B, L], e.g. [2, 292]
+        pixel_values: [B, 6, H, W], e.g. [2, 6, 224, 224]
+        """
         # with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16): 
+
+        # print(f"{pixel_values.mean((1, 2, 3))=}")
+
         transformer_outputs = self.rwtranrsformer(
             input_ids=input_ids, 
             attention_mask=attention_mask, 
@@ -70,9 +78,14 @@ class CriticVLA(nn.Module):
         )
 
         hidden_states = transformer_outputs.hidden_states[-1] # [B, L, D], e.g. [2, 292, 4096]
-        hidden_states = hidden_states[:, -1, :].float()  # [B, D], e.g. [2, 4096]
+        # Option 1: use the last token
+        # hidden_states = hidden_states[:, -1, :].float()  # [X, all the same]
+        # Option 2: use the mean of all tokens
+        text_features = hidden_states.mean(dim=1).float()   # [B, D], e.g. [2, 4096]
 
-        x = self.relu(self.v_head_mlp1(hidden_states))
+        # print(f"{text_features.mean(-1)=}")
+
+        x = self.relu(self.v_head_mlp1(text_features))
         x = self.relu(self.v_head_mlp2(x))
         values = self.v_head_mlp3(x).squeeze(-1)
         return values   # [B,]
