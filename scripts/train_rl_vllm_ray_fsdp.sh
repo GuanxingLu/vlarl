@@ -16,8 +16,8 @@ export MESA_GL_VERSION_OVERRIDE=4.1
 export PYOPENGL_PLATFORM=egl
 
 # data
-# POSTFIX=spatial
-POSTFIX=goal
+POSTFIX=spatial
+# POSTFIX=goal
 # POSTFIX=object
 # POSTFIX=10
 DATA_NAME=libero_${POSTFIX}
@@ -42,6 +42,7 @@ TASK_IDS=${2:-$(printf "0,%.0s" $(seq 1 $((TOTAL_TASKS))))} # Repeat 0 TOTAL_TAS
 TASK_IDS=${TASK_IDS%,} # Remove trailing comma
 
 echo "GPUS=${GPUS}"
+echo "TASK_SUITE_NAME=${DATA_NAME}"
 echo "TOTAL_TASKS=${TOTAL_TASKS}"
 echo "TASK_IDS=${TASK_IDS}"
 echo "ACTOR_GPUS=${ACTOR_GPUS}"
