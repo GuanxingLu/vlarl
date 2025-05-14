@@ -84,6 +84,11 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --value_model_type "vla" \
     --value_use_lora False \
     --norm_adv False \
+    --use_curriculum True \
+    --curriculum_temp 0.5 \
+    --curriculum_min_prob 0.05 \
+    --success_history_window 10 \
+    --curriculum_recompute_freq 20 \
     --save_freq 10 \
     --save_video True \
     --use_wandb True \
