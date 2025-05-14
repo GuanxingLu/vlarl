@@ -411,7 +411,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         # Scale the positive rewards
         reward_np_list = np.array(reward_np_list)
         if self.mode == "train":
-            reward_np_list[reward_np_list > 0] = self.verify_reward_value
+            # reward_np_list[reward_np_list > 0] = self.verify_reward_value
             # Penalize the invalid actions
             reward_np_list[invalid_ids] = self.penalty_reward_value
 
