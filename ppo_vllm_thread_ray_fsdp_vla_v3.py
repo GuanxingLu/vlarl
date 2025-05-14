@@ -344,6 +344,8 @@ class Args:
     """the value function coefficient"""
     cliprange_value: float = 0.2
     """the clip range for the value function"""
+    clip_vloss: bool = False
+    """Whether to clip value loss in PPO"""
     gamma: float = 0.99
     """the discount factor (1.0 for sparse rewards, 0.99 for normal case)"""
     lam: float = 0.95
@@ -450,6 +452,7 @@ def calculate_runtime_args(args: Args,):
         f"+tb{args.mini_batch_size * args.gradient_accumulation_steps}" # training batch size
         f"+lr-{args.learning_rate}"
         f"+vlr-{args.value_learning_rate}"
+        f"+temp-{args.temperature}"
         f"+s-{args.seed}"
     )
     if args.run_id_note is not None:
@@ -459,7 +462,7 @@ def calculate_runtime_args(args: Args,):
     if args.norm_adv:
         exp_id += f"+norm_adv"
     if args.use_curriculum:
-        exp_id += f"+curriculum_t{args.curriculum_temp}_mp{args.curriculum_min_prob}_w{args.success_history_window}"
+        exp_id += f"+cl"
     # if args.image_aug:
     #     exp_id += "--image_aug"
     args.exp_id = exp_id
@@ -1396,17 +1399,19 @@ class PolicyTrainerRayProcess(RayProcess):
                                 vpred = get_reward(
                                     self.value_model, mb_queries, mb_pixel_values, args.pad_token_id
                                 )
-                                vpredclipped = torch.clamp(
-                                    vpred,
-                                    mb_values - args.cliprange_value,
-                                    mb_values + args.cliprange_value,
-                                )
-                                # check if other thing needs gradient
-                                # logger.info(f"vpred: {vpred.requires_grad}, mb_return_detached: {mb_return_detached.requires_grad}")
                                 vf_losses1 = torch.square(vpred - mb_return)
-                                vf_losses2 = torch.square(vpredclipped - mb_return)
-                                vf_loss_max = torch.max(vf_losses1, vf_losses2)
-                                vf_loss = 0.5 * vf_loss_max.mean() * args.vf_coef
+                                
+                                if args.clip_vloss:
+                                    vpredclipped = torch.clamp(
+                                        vpred,
+                                        mb_values - args.cliprange_value,
+                                        mb_values + args.cliprange_value,
+                                    )
+                                    vf_losses2 = torch.square(vpredclipped - mb_return)
+                                    vf_loss_max = torch.max(vf_losses1, vf_losses2)
+                                    vf_loss = 0.5 * vf_loss_max.mean() * args.vf_coef
+                                else:
+                                    vf_loss = 0.5 * vf_losses1.mean() * args.vf_coef
                                 
                                 self.value_optimizer.zero_grad()
                                 vf_loss.backward()
@@ -1477,7 +1482,7 @@ class PolicyTrainerRayProcess(RayProcess):
                                 self.policy_scheduler.step()
                             with torch.no_grad():
                                 if args.use_value_model:
-                                    vf_clipfrac = (vf_losses2 > vf_losses1).float().mean()
+                                    vf_clipfrac = (vf_losses2 > vf_losses1).float().mean() if args.clip_vloss else torch.tensor(0.0, device=device)
                                     vf_loss_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = vf_loss
                                     vf_clipfrac_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = vf_clipfrac
                                     vf_grad_norm_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = value_grad_norm
@@ -1497,7 +1502,9 @@ class PolicyTrainerRayProcess(RayProcess):
                         if training_step > args.value_init_steps:
                             del new_logprobs, logprobs_diff, ratio, pg_losses, pg_losses2, pg_loss
                         if args.use_value_model:
-                            del vpred, vpredclipped, vf_losses1, vf_losses2, vf_loss_max
+                            del vpred, vf_losses1
+                            if args.clip_vloss:
+                                del vpredclipped, vf_losses2, vf_loss_max
                         # fmt: on
                         # del everything and empty cache
                         torch.cuda.empty_cache()

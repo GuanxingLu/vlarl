@@ -50,7 +50,7 @@ echo "local_rollout_batch_size=${local_rollout_batch_size}"
 
 CUDA_VISIBLE_DEVICES=$GPUS python \
     ppo_vllm_thread_ray_fsdp_vla_v3.py \
-    --vla_path "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
+    --vla_path "MODEL/openvla-7b" \
     --data_root_dir ./data/modified_libero_rlds \
     --dataset_name ${DATA_ROOT} \
     --task_suite_name ${DATA_NAME} \
@@ -63,14 +63,14 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --local_rollout_forward_batch_size ${local_rollout_batch_size} \
     --actor_num_gpus_per_node "[${ACTOR_GPUS}]" \
     --task_ids "[${TASK_IDS}]" \
-    --temperature 1.5 \
+    --temperature 2.7 \
     --num_epochs 1 \
     --value_init_steps 5 \
-    --learning_rate 5e-5 \
+    --learning_rate 5e-6 \
     --value_learning_rate 1e-4 \
     --max_grad_norm 1.0 \
     --num_steps 128 \
-    --max_env_length 150 \
+    --max_env_length 128 \
     --total_episodes 100000 \
     --vllm_tensor_parallel_size 1 \
     --vllm_enforce_eager True \
@@ -83,13 +83,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --use_value_model True \
     --value_model_type "vla" \
     --value_use_lora False \
-    --clip_vloss False \
     --norm_adv False \
-    --use_curriculum True \
-    --curriculum_temp 0.5 \
-    --curriculum_min_prob 0.05 \
-    --success_history_window 10 \
-    --curriculum_recompute_freq 20 \
     --save_freq 10 \
     --save_video True \
     --use_wandb True \

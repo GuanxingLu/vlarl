@@ -1,4 +1,6 @@
 # Newly-added
+*.whl
+.ssh/
 results/
 tool/
 test/
