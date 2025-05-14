@@ -7,9 +7,9 @@ POSTFIX=spatial
 DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
 
-# MODEL_PATH=MODEL/openvla-7b-finetuned-libero-${POSTFIX}
-MODEL_PATH=ppo+libero_spatial_no_noops+trials50+ns128+maxs128+rb10+tb16+lr-5e-06+vlr-0.0001+s-1+lora
-STEP_PATH=step_60
+MODEL_PATH=MODEL/openvla-7b-finetuned-libero-${POSTFIX}
+# MODEL_PATH=ppo+libero_spatial_no_noops+trials50+ns128+maxs128+rb10+tb16+lr-5e-06+vlr-0.0001+s-1+lora
+# STEP_PATH=step_60
 
 SCP=False
 SERVER_IP=195.26.233.41
@@ -44,6 +44,7 @@ if [ ${EVAL} = True ]; then
   CUDA_VISIBLE_DEVICES=$GPUS python run_libero_eval_vllm.py \
     --model_family openvla \
     --pretrained_checkpoint "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
+    --local_log_dir debug \
     --task_suite_name ${DATA_NAME} \
     --num_trials_per_task 50 \
     --num_tasks_per_suite 10 \

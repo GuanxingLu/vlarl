@@ -445,6 +445,7 @@ def calculate_runtime_args(args: Args,):
 
     exp_id = (
         f"ppo+{args.dataset_name}"
+        f"+tasks{np.unique(args.task_ids).size}"
         f"+trials{args.num_trials_per_task}"
         f"+ns{args.num_steps}"
         f"+maxs{args.max_env_length}"
@@ -963,7 +964,7 @@ class PolicyTrainerRayProcess(RayProcess):
             resume_training_step: int,
         ):
             llm = vllm_engines[0]
-            for training_step in range(resume_training_step, num_training_steps):
+            while True:
                 g_queries_list = param_prompt_Q.get()
                 if g_queries_list is None:
                     break
@@ -1249,9 +1250,8 @@ class PolicyTrainerRayProcess(RayProcess):
 
                         # Compute a score using the reward model
                         # score = torch.zeros(query.shape[0], device=device)
-                        # score += global_rewards[i : i + args.local_rollout_forward_batch_size]
                         # if args.process_reward_model:
-                        #     processed_score = get_reward(self.reward_model, postprocessed_query_response, args.pad_token_id, context_length)
+                        #     processed_score = get_reward(self.reward_model, query_response, args.pad_token_id, context_length)
                         #     score += processed_score
                         
                         # Accumulate rollout data
@@ -1259,7 +1259,7 @@ class PolicyTrainerRayProcess(RayProcess):
                         # scores[step, i : i + args.local_rollout_forward_batch_size] = score
                         values[step, i : i + args.local_rollout_forward_batch_size] = value
 
-                    del query, response, pixel_value
+                    del query, response, pixel_value, value
                     gc.collect()
                     torch.cuda.empty_cache()
 
@@ -1311,7 +1311,7 @@ class PolicyTrainerRayProcess(RayProcess):
                 # compute episodic reward
                 for i in range(args.local_rollout_batch_size):
                     if local_dones[i]:
-                        episodic_returns.append(local_rewards[i].item())
+                        episodic_returns.append(1.0 if local_rewards[i].item() > 0 else 0.0)
                         episodic_lengths.append(local_infos["step_count_tmp"][i])
 
                 local_token_obs["input_ids"] = local_token_obs["input_ids"].to(dtype=torch.long)
@@ -1513,7 +1513,7 @@ class PolicyTrainerRayProcess(RayProcess):
             # Update metrics
             # logger.info("start metrics")
             with torch.no_grad():
-                local_metrics["objective/entropy"] = (-logprobs).sum(1).mean()
+                local_metrics["objective/entropy"] = (-b_logprobs).sum(1).mean()
                 local_metrics["objective/entropy_vllm"] = (-vllm_logprobs).sum(1).mean()
                 local_metrics["objective/scores"] = scores.mean()
                 local_metrics["objective/scores_std"] = scores.std() if scores.shape[0] > 1 else torch.tensor(0, device=device)

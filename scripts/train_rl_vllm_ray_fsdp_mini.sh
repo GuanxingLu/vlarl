@@ -55,8 +55,8 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --value_learning_rate 5e-4 \
     --max_grad_norm 1.0 \
     --num_steps 128 \
-    --max_env_length 128 \
-    --total_episodes 100000 \
+    --max_env_length 150 \
+    --total_episodes 1000000 \
     --vllm_tensor_parallel_size 1 \
     --vllm_enforce_eager True \
     --enable_prefix_caching False \
@@ -68,6 +68,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --use_value_model False \
     --value_model_type "vla" \
     --value_use_lora False \
+    --process_reward_model True \
     --norm_adv True \
     --use_curriculum True \
     --curriculum_temp 0.5 \
