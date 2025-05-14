@@ -105,6 +105,15 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         self.non_stop_penalty = cfg.non_stop_penalty
         self.verify_reward_value = cfg.verify_reward_value
 
+        # Curriculum learning parameters
+        self.use_curriculum = getattr(cfg, "use_curriculum", False)
+        self.curriculum_temp = getattr(cfg, "curriculum_temp", 1.0)
+        self.curriculum_min_prob = getattr(cfg, "curriculum_min_prob", 0.1)
+        self.success_tracker = {}  # {task_id: {state_id: [success_history]}}
+        self.success_history_window = getattr(cfg, "success_history_window", 5)
+        self.curriculum_recompute_freq = getattr(cfg, "curriculum_recompute_freq", 10)
+        self.episode_count = 0
+
     def _get_max_step(self, task_suite_name: str) -> int:
         """
         Determine max_step dynamically based on the task suite.
@@ -155,6 +164,99 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
             "pixel_values": (3, 224, 224),
             "prompts": (1,),
         }
+
+    def _get_success_rate(self, task_id, state_id):
+        """
+        Calculate success rate for a task-state pair.
+        
+        Args:
+            task_id: ID of the task
+            state_id: ID of the initial state
+            
+        Returns:
+            float: Success rate (0.0 to 1.0)
+        """
+        if task_id not in self.success_tracker or state_id not in self.success_tracker[task_id]:
+            return 0.0
+        
+        history = self.success_tracker[task_id][state_id]
+        if not history:
+            return 0.0
+        
+        return sum(history) / len(history)
+
+    def _update_success_tracker(self, task_id, state_id, success):
+        """
+        Update success tracker with the latest result.
+        
+        Args:
+            task_id: ID of the task
+            state_id: ID of the initial state
+            success: Whether the task was successful (True/False)
+        """
+        if task_id not in self.success_tracker:
+            self.success_tracker[task_id] = {}
+        
+        if state_id not in self.success_tracker[task_id]:
+            self.success_tracker[task_id][state_id] = []
+            
+        history = self.success_tracker[task_id][state_id]
+        history.append(1.0 if success else 0.0)
+        
+        # Maintain fixed window size
+        if len(history) > self.success_history_window:
+            history.pop(0)
+
+    def _sample_task_state_curriculum(self, task_id):
+        """
+        Sample an initial state for a task using curriculum learning.
+        
+        Args:
+            task_id: ID of the task
+            
+        Returns:
+            int: Selected state ID
+        """
+        task_initial_states = self.initial_states_list[task_id]
+        state_ids = list(range(len(task_initial_states)))
+        
+        # If task not in tracker yet, use uniform sampling
+        if task_id not in self.success_tracker:
+            return random.choice(state_ids)
+        
+        # Calculate sampling weights (lower success rate = higher weight)
+        weights = []
+        for state_id in state_ids:
+            success_rate = self._get_success_rate(task_id, state_id)
+            
+            # Weight inversely proportional to success rate, with temperature
+            weight = (1.0 - success_rate) ** (1.0 / self.curriculum_temp)
+            
+            # Ensure minimum sampling probability
+            weight = max(weight, self.curriculum_min_prob)
+            weights.append(weight)
+        
+        # Normalize weights to probabilities
+        total_weight = sum(weights)
+        probabilities = [w / total_weight for w in weights]
+        
+        # Sample based on probabilities
+        return random.choices(state_ids, weights=probabilities, k=1)[0]
+
+    def get_curriculum_stats(self):
+        """
+        Get curriculum statistics for logging.
+        
+        Returns:
+            dict: Statistics about the curriculum state
+        """
+        stats = {}
+        for task_id in self.success_tracker:
+            for state_id in self.success_tracker[task_id]:
+                success_rate = self._get_success_rate(task_id, state_id)
+                stats[f"task_{task_id}_state_{state_id}_success"] = success_rate
+        
+        return stats
 
     def _reset_impl(self) -> EnvOutput:
         # HACK: 10 tasks in total, so we setup >10 environments
@@ -226,7 +328,10 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         for task_idx in range(self.env_num):
             task_initial_states = self.initial_states_list[task_idx]
             if self.mode == "train":
-                state_id = random.randint(0, len(task_initial_states) - 1)
+                if self.use_curriculum:
+                    state_id = self._sample_task_state_curriculum(task_idx)
+                else:
+                    state_id = random.randint(0, len(task_initial_states) - 1)
             elif self.mode == "eval":
                 state_id = self.to_do_state_ids[task_idx].pop(0)
 
@@ -346,8 +451,16 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
             new_initial_states = []
             dummy_actions = []
             for i, task_id in enumerate(done_task_indices):
+                # Update success tracker and log results
+                done_idx = done_indices[i]
+                success = reward_np_list[done_idx] > 0
+                
+                if self.mode == "train" and self.use_curriculum:
+                    # Update success tracker with this episode's result
+                    current_state_id = self.initial_state_ids[task_id]
+                    self._update_success_tracker(task_id, current_state_id, success)
+                
                 # Log results
-                success = self.success[task_id]
                 status = "successfully" if success else "failed to"
                 color = "green" if success else "red"
                 cprint(f"[INFO] Task {task_id} variant {self.initial_state_ids[task_id]} {status} complete in {self.step_count[task_id]} steps.", color)
@@ -370,7 +483,10 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 task_initial_states = self.initial_states_list[task_id]     # reuse the same task
 
                 if self.mode == "train":
-                    state_id = random.randint(0, len(task_initial_states) - 1)
+                    if self.use_curriculum:
+                        state_id = self._sample_task_state_curriculum(task_id)
+                    else:
+                        state_id = random.randint(0, len(task_initial_states) - 1)
                 elif self.mode == "eval":
                     if len(self.to_do_state_ids[task_id]) == 0:
                         cprint(f"[INFO] Task {task_id} completes evaluation, and has no more initial states to evaluate.", "cyan")
@@ -385,6 +501,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 dummy_actions.append(dummy_action)
 
             self.total_episodes += len(done_task_indices)
+            self.episode_count += len(done_task_indices)
 
             # Reset done environments in parallel
             reset_task_indices = [task_id for task_id in done_task_indices if self.initial_state_ids[task_id] != -1]  # skip the task if no more initial state to reset
@@ -422,6 +539,11 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
             "step_count": self.step_count,
             "step_count_tmp": step_count_tmp,
         }
+        
+        # Add curriculum stats to info dict periodically
+        if self.mode == "train" and self.use_curriculum and self.episode_count >= self.curriculum_recompute_freq:
+            self.episode_count = 0
+            infos["curriculum_stats"] = self.get_curriculum_stats()
 
         return next_obs, reward_np_list, dones, infos
 

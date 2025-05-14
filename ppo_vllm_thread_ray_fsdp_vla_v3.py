@@ -203,6 +203,18 @@ class Args:
     context_length: int = 64
     """Length of the query"""
 
+    # Curriculum learning parameters
+    use_curriculum: bool = False
+    """Whether to use curriculum learning for sampling tasks"""
+    curriculum_temp: float = 1.0
+    """Temperature parameter for curriculum sampling (higher = more uniform)"""
+    curriculum_min_prob: float = 0.1
+    """Minimum probability for sampling any task/state"""
+    success_history_window: int = 5
+    """Number of recent episodes to use for computing success rate"""
+    curriculum_recompute_freq: int = 10
+    """How often to recompute and log curriculum statistics (in episodes)"""
+
     # for debugging
     verbose: bool = False
     """Whether to print a lot of information"""
@@ -446,6 +458,8 @@ def calculate_runtime_args(args: Args,):
         exp_id += f"+lora"
     if args.norm_adv:
         exp_id += f"+norm_adv"
+    if args.use_curriculum:
+        exp_id += f"+curriculum_t{args.curriculum_temp}_mp{args.curriculum_min_prob}_w{args.success_history_window}"
     # if args.image_aug:
     #     exp_id += "--image_aug"
     args.exp_id = exp_id
@@ -1257,6 +1271,15 @@ class PolicyTrainerRayProcess(RayProcess):
                         values=values[step].detach().cpu().numpy(), 
                         log_probs=vllm_logprobs[step].detach().cpu().numpy()
                     )
+
+                # Check for curriculum stats in local_infos
+                if "curriculum_stats" in local_infos:
+                    global_metrics = {}
+                    for k, v in local_infos["curriculum_stats"].items():
+                        global_metrics[f"curriculum/{k}"] = v
+                    for k, v in global_metrics.items():
+                        metrics_queue.put(({k: v}, global_step))
+                
                 processed_obs = process_with_padding_side(processor, local_obs["prompts"], local_obs["pixel_values"], padding=True, padding_side=padding_side).to(device, dtype=torch.float32)
                 local_token_obs["input_ids"][:, :processed_obs["input_ids"].shape[1]] = processed_obs["input_ids"]
                 local_token_obs["input_ids"] = add_special_token(local_token_obs["input_ids"], pad_token_id=args.pad_token_id)
@@ -1512,6 +1535,14 @@ class PolicyTrainerRayProcess(RayProcess):
                     "objective/episodic_length": sum(episodic_lengths)/len(episodic_lengths) if len(episodic_lengths) > 0 else 0,
                 }
             )
+            
+            # Add curriculum stats to metrics if available
+            if "curriculum_stats" in local_infos:
+                curriculum_stats = {}
+                for k, v in local_infos["curriculum_stats"].items():
+                    curriculum_stats[f"curriculum/{k}"] = v
+                global_metrics.update(curriculum_stats)
+            
             # Update metrics dictionary
             metrics = {
                 "episode": episode,

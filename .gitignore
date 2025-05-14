@@ -1,4 +1,7 @@
 # Newly-added
+results/
+tool/
+test/
 experiments/logs/
 checkpoints/
 logs/
