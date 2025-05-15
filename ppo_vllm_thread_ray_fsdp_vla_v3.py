@@ -1239,7 +1239,7 @@ class PolicyTrainerRayProcess(RayProcess):
                         torch.cuda.empty_cache()
                         logger.info(f"Value time: {time.time() - start_time} seconds")
 
-                        logger.info(f"{value=}")
+                        # logger.info(f"{value=}")
 
                         # TODO: Argh... this is redundant with vllm logprobs. Try to remove it.
                         # start_time = time.time()
@@ -1273,8 +1273,6 @@ class PolicyTrainerRayProcess(RayProcess):
                 }
                 logger.info(f"🕹️🕹️🕹️ Env {step=}")
                 with timer.timer("env_step"):
-                    logger.info(f"{values[step]=}")
-
                     local_obs, local_rewards, local_dones, local_infos = train_envs.step(
                         local_actions, 
                         values=values[step].detach().cpu().numpy(), 
@@ -1468,20 +1466,20 @@ class PolicyTrainerRayProcess(RayProcess):
 
                                 with torch.no_grad():
                                     approxkl = ((-logprobs_diff).exp() - 1 + logprobs_diff).mean()  # kl3
-                                    if approxkl > args.max_approx_kl or torch.isnan(approxkl):
-                                        logger.info("--------------------------------")
-                                        logger.info(f"Stopping training due to high KL divergence: {approxkl=}, {approxkl.dtype=}")
-                                        logger.info(f"{mb_query_responses=}")
-                                        # [B, C, H, W] -> [B]
-                                        logger.info(f"{mb_pixel_values.mean(dim=(1, 2, 3))=}")
-                                        logger.info(f"{new_logprobs=}, {new_logprobs.dtype=}")
-                                        logger.info(f"{mb_logprobs=}, {mb_logprobs.dtype=}")
-                                        logger.info(f"{mb_responses=}, {mb_responses.dtype=}")
-                                        logger.info(f"{new_logits.argmax(dim=-1)=}, {new_logits.argmax(dim=-1).dtype=}")
-                                        logger.info("--------------------------------")
-                                        self.policy_optimizer.zero_grad()
-                                    else:
-                                        logger.info(f"Passed! {approxkl=}")
+                                    # if approxkl > args.max_approx_kl or torch.isnan(approxkl):
+                                    #     logger.info("--------------------------------")
+                                    #     logger.info(f"Stopping training due to high KL divergence: {approxkl=}, {approxkl.dtype=}")
+                                    #     logger.info(f"{mb_query_responses=}")
+                                    #     # [B, C, H, W] -> [B]
+                                    #     logger.info(f"{mb_pixel_values.mean(dim=(1, 2, 3))=}")
+                                    #     logger.info(f"{new_logprobs=}, {new_logprobs.dtype=}")
+                                    #     logger.info(f"{mb_logprobs=}, {mb_logprobs.dtype=}")
+                                    #     logger.info(f"{mb_responses=}, {mb_responses.dtype=}")
+                                    #     logger.info(f"{new_logits.argmax(dim=-1)=}, {new_logits.argmax(dim=-1).dtype=}")
+                                    #     logger.info("--------------------------------")
+                                    #     self.policy_optimizer.zero_grad()
+                                    # else:
+                                    #     logger.info(f"Passed! {approxkl=}")
 
                                 if isinstance(self.model, FSDP):
                                     policy_grad_norm = self.model.clip_grad_norm_(max_norm=args.policy_max_grad_norm)
@@ -1525,6 +1523,9 @@ class PolicyTrainerRayProcess(RayProcess):
             # Update metrics
             # logger.info("start metrics")
             with torch.no_grad():
+
+                logger.info(f"{(-b_logprobs).sum(1).mean()=}")
+
                 local_metrics["objective/entropy"] = (-b_logprobs).sum(1).mean()
                 local_metrics["objective/entropy_vllm"] = (-vllm_logprobs).sum(1).mean()
                 local_metrics["objective/scores"] = scores.mean()

@@ -71,6 +71,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         self.mode = mode
         assert mode in ["train", "eval"], f"Invalid mode: {mode}"
         self.n_agents = 1  # Number of agents (default: 1) NOT USED
+        self.task_id_mapping = {}  # Map from env index to actual task ID
 
         # Initialize LIBERO task suite
         self.benchmark_dict = benchmark.get_benchmark_dict()
@@ -217,8 +218,8 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         Returns:
             int: Selected state ID
         """
-        # Get the actual task ID value from the task object
-        actual_task_id = self.tasks[task_idx].id if hasattr(self.tasks[task_idx], 'id') else task_idx
+        # Get the actual task ID from the mapping
+        actual_task_id = self.task_id_mapping.get(task_idx, task_idx)
         
         task_initial_states = self.initial_states_list[task_idx]
         state_ids = list(range(len(task_initial_states)))
@@ -280,6 +281,9 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
             # task_ids = [1]
 
         cprint(f"[DEBUG] Sampled task_ids: {task_ids}", "yellow")
+        
+        # Store the mapping from environment index to actual task ID
+        self.task_id_mapping = {idx: task_id for idx, task_id in enumerate(task_ids)}
 
         self.tasks = []
         self.initial_states_list = []
@@ -461,8 +465,8 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 if self.mode == "train" and self.use_curriculum:
                     # Update success tracker with this episode's result
                     current_state_id = self.initial_state_ids[task_id]
-                    # Get the actual task ID value from the task object
-                    actual_task_id = self.tasks[task_id].id if hasattr(self.tasks[task_id], 'id') else task_id
+                    # Get the actual task ID from the mapping
+                    actual_task_id = self.task_id_mapping.get(task_id, task_id)
                     self._update_success_tracker(actual_task_id, current_state_id, success)
                 
                 # Log results
