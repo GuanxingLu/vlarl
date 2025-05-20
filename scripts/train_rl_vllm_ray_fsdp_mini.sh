@@ -11,7 +11,10 @@ export MESA_GL_VERSION_OVERRIDE=4.1
 export PYOPENGL_PLATFORM=egl
 
 # data
-POSTFIX=spatial
+# POSTFIX=spatial
+# POSTFIX=goal
+# POSTFIX=object
+POSTFIX=10
 DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
 per_device_train_batch_size=1
@@ -28,6 +31,7 @@ TASK_IDS=${2:-$(printf "0,%.0s" $(seq 1 $((TOTAL_TASKS))))} # Repeat 0 TOTAL_TAS
 TASK_IDS=${TASK_IDS%,} # Remove trailing comma
 
 echo "GPUS=${GPUS}"
+echo "TASK_SUITE_NAME=${DATA_NAME}"
 echo "TOTAL_TASKS=${TOTAL_TASKS}"
 echo "TASK_IDS=${TASK_IDS}"
 echo "ACTOR_GPUS=${ACTOR_GPUS}"
@@ -49,14 +53,15 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --local_rollout_forward_batch_size ${local_rollout_batch_size} \
     --actor_num_gpus_per_node "[${ACTOR_GPUS}]" \
     --task_ids "[${TASK_IDS}]" \
-    --temperature 2.7 \
+    --temperature 1.5 \
     --num_epochs 1 \
     --learning_rate 2e-6 \
     --value_learning_rate 5e-4 \
-    --max_grad_norm 1.0 \
-    --num_steps 128 \
-    --max_env_length 150 \
-    --total_episodes 1000000 \
+    --policy_max_grad_norm 1.0 \
+    --value_max_grad_norm 5.0 \
+    --num_steps 512 \
+    --max_env_length 400 \
+    --total_episodes 100000 \
     --vllm_tensor_parallel_size 1 \
     --vllm_enforce_eager True \
     --enable_prefix_caching False \
@@ -68,14 +73,14 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --use_value_model False \
     --value_model_type "vla" \
     --value_use_lora False \
-    --process_reward_model True \
-    --norm_adv True \
+    --clip_vloss False \
+    --norm_adv False \
     --use_curriculum True \
     --curriculum_temp 0.5 \
     --curriculum_min_prob 0.05 \
     --success_history_window 10 \
-    --curriculum_recompute_freq 20 \
-    --save_freq 10000 \
+    --curriculum_recompute_freq 10 \
+    --save_freq 100000 \
     --save_video True \
     --use_wandb False \
     --wandb_offline False \

@@ -1324,8 +1324,8 @@ class PolicyTrainerRayProcess(RayProcess):
                 del local_token_obs
                 torch.cuda.empty_cache()
 
-            # if args.debug:
-            #     continue
+            if args.debug:
+                continue
 
             # logger.info('gae')
             # compute advantages and returns
@@ -1369,6 +1369,8 @@ class PolicyTrainerRayProcess(RayProcess):
 
             # logger.info(f"{scores.shape=}, {scores=}")
             # logger.info(f"{b_returns.shape=}, {b_returns=}")
+
+            logger.info(f"{(-b_logprobs).sum(1).mean()=}")
 
             # Training phase
             log_gpu_memory_usage("[Training] Before training", rank=accelerator.process_index, logger=logger, level=logging.INFO)
@@ -1523,9 +1525,6 @@ class PolicyTrainerRayProcess(RayProcess):
             # Update metrics
             # logger.info("start metrics")
             with torch.no_grad():
-
-                logger.info(f"{(-b_logprobs).sum(1).mean()=}")
-
                 local_metrics["objective/entropy"] = (-b_logprobs).sum(1).mean()
                 local_metrics["objective/entropy_vllm"] = (-vllm_logprobs).sum(1).mean()
                 local_metrics["objective/scores"] = scores.mean()

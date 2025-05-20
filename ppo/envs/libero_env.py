@@ -438,7 +438,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                     # "goal": self.task_descriptions[idx],
                     "step": self.step_count[idx],
                     "tokens": action[idx],
-                    "reward": reward_np_list[idx],
                     "prob": probs[idx] if probs is not None else None,
                     "reward": reward_np_list[idx],
                     "value_preds": values[idx] if values is not None else None,
