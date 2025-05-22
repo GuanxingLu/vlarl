@@ -1214,7 +1214,7 @@ class PolicyTrainerRayProcess(RayProcess):
                     vllm_logprobs[step] = local_vllm_logprobs
 
                     # Process mini-batches over the rollout data
-                    self.model.eval() # verl
+                    self.model.eval()
                     if args.use_value_model:
                         self.value_model.eval()
                     for i in range(0, args.local_rollout_batch_size, args.local_rollout_forward_batch_size):

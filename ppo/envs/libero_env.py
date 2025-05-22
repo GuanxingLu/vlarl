@@ -219,7 +219,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
             int: Selected state ID
         """
         # Get the actual task ID from the mapping
-        actual_task_id = self.task_id_mapping.get(task_idx, task_idx)
+        actual_task_id = self.task_id_mapping[task_idx]
         
         task_initial_states = self.initial_states_list[task_idx]
         state_ids = list(range(len(task_initial_states)))
@@ -466,7 +466,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                     # Update success tracker with this episode's result
                     current_state_id = self.initial_state_ids[task_id]
                     # Get the actual task ID from the mapping
-                    actual_task_id = self.task_id_mapping.get(task_id, task_id)
+                    actual_task_id = self.task_id_mapping[task_id]
                     self._update_success_tracker(actual_task_id, current_state_id, success)
                 
                 # Log results
@@ -526,6 +526,14 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 obs_np_list[reset_indices] = obs
                 # Reset other variables
                 self.step_count[reset_task_indices] = 0
+
+                if self.save_video:
+                    img = get_libero_image(obs, self.resize_size)
+                    img_args = {
+                        "goal": self.task_descriptions[reset_indices],
+                    }
+                    img = add_info_board(img, **img_args)
+                    self.replay_images[reset_indices].append(img)
 
             # Filter out completed tasks with no further states
             obs_np_list = [obs_np_list[idx] for idx in range(len(dones)) if idx not in done_indices or self.initial_state_ids[id_to_task_id[idx]] != -1]
