@@ -31,6 +31,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import sys
 import os
 from argparse import Namespace
 from dataclasses import asdict, dataclass, field
@@ -52,6 +53,9 @@ import logging
 from queue import Empty, Queue
 from typing import Any, Callable, Iterator, List, Literal, Optional, Tuple, Dict, Union
 from copy import deepcopy
+import matplotlib.pyplot as plt
+import io # For converting plot to image for TensorBoard
+from PIL import Image # For converting plot to image for TensorBoard
 
 import torch
 import torch.distributed as dist
@@ -1276,7 +1280,7 @@ class PolicyTrainerRayProcess(RayProcess):
                     local_obs, local_rewards, local_dones, local_infos = train_envs.step(
                         local_actions, 
                         values=values[step].detach().cpu().numpy(), 
-                        log_probs=vllm_logprobs[step].detach().cpu().numpy()
+                        log_probs=vllm_logprobs[step].detach().cpu().numpy(),
                     )
                 
                 # Store curriculum statistics if available
@@ -1323,9 +1327,9 @@ class PolicyTrainerRayProcess(RayProcess):
 
                 del local_token_obs
                 torch.cuda.empty_cache()
-
-            if args.debug:
-                continue
+        
+            # if args.debug:
+            #     continue
 
             # logger.info('gae')
             # compute advantages and returns
@@ -1369,8 +1373,6 @@ class PolicyTrainerRayProcess(RayProcess):
 
             # logger.info(f"{scores.shape=}, {scores=}")
             # logger.info(f"{b_returns.shape=}, {b_returns=}")
-
-            logger.info(f"{(-b_logprobs).sum(1).mean()=}")
 
             # Training phase
             log_gpu_memory_usage("[Training] Before training", rank=accelerator.process_index, logger=logger, level=logging.INFO)
@@ -1468,20 +1470,6 @@ class PolicyTrainerRayProcess(RayProcess):
 
                                 with torch.no_grad():
                                     approxkl = ((-logprobs_diff).exp() - 1 + logprobs_diff).mean()  # kl3
-                                    # if approxkl > args.max_approx_kl or torch.isnan(approxkl):
-                                    #     logger.info("--------------------------------")
-                                    #     logger.info(f"Stopping training due to high KL divergence: {approxkl=}, {approxkl.dtype=}")
-                                    #     logger.info(f"{mb_query_responses=}")
-                                    #     # [B, C, H, W] -> [B]
-                                    #     logger.info(f"{mb_pixel_values.mean(dim=(1, 2, 3))=}")
-                                    #     logger.info(f"{new_logprobs=}, {new_logprobs.dtype=}")
-                                    #     logger.info(f"{mb_logprobs=}, {mb_logprobs.dtype=}")
-                                    #     logger.info(f"{mb_responses=}, {mb_responses.dtype=}")
-                                    #     logger.info(f"{new_logits.argmax(dim=-1)=}, {new_logits.argmax(dim=-1).dtype=}")
-                                    #     logger.info("--------------------------------")
-                                    #     self.policy_optimizer.zero_grad()
-                                    # else:
-                                    #     logger.info(f"Passed! {approxkl=}")
 
                                 if isinstance(self.model, FSDP):
                                     policy_grad_norm = self.model.clip_grad_norm_(max_norm=args.policy_max_grad_norm)
@@ -1499,6 +1487,12 @@ class PolicyTrainerRayProcess(RayProcess):
                                     vf_clipfrac_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = vf_clipfrac
                                     vf_grad_norm_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = value_grad_norm
 
+                                    # Calculate sum of value model parameter norms
+                                    value_param_norm_sum = torch.tensor(0.0, device=device)
+                                    for param in self.value_model.parameters():
+                                        value_param_norm_sum += torch.norm(param.data.float(), p=2)
+                                    local_metrics["value/param_norm_sum"] = value_param_norm_sum
+
                                 if training_step > args.value_init_steps:
                                     pg_clipfrac = (pg_losses2 > pg_losses).float().mean()
                                     approxkl_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = approxkl
@@ -1506,6 +1500,12 @@ class PolicyTrainerRayProcess(RayProcess):
                                     pg_loss_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = pg_loss
                                     pg_grad_norm_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = policy_grad_norm
                                     ratio_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = ratio.mean()
+
+                                    # Calculate sum of policy model parameter norms
+                                    policy_param_norm_sum = torch.tensor(0.0, device=device)
+                                    for param in self.model.parameters():
+                                        policy_param_norm_sum += torch.norm(param.data.float(), p=2)
+                                    local_metrics["policy/param_norm_sum"] = policy_param_norm_sum
 
                             gradient_accumulation_idx += 1
                         minibatch_idx += 1
@@ -1525,7 +1525,7 @@ class PolicyTrainerRayProcess(RayProcess):
             # Update metrics
             # logger.info("start metrics")
             with torch.no_grad():
-                local_metrics["objective/entropy"] = (-b_logprobs).sum(1).mean()
+                local_metrics["objective/entropy"] = (-b_logprobs).sum(1).mean()    # NOTE: this will be biased
                 local_metrics["objective/entropy_vllm"] = (-vllm_logprobs).sum(1).mean()
                 local_metrics["objective/scores"] = scores.mean()
                 local_metrics["objective/scores_std"] = scores.std() if scores.shape[0] > 1 else torch.tensor(0, device=device)
@@ -1541,6 +1541,11 @@ class PolicyTrainerRayProcess(RayProcess):
                 if args.use_value_model:
                     local_metrics["value/value_grad_norm"] = vf_grad_norm_stats.mean()
                     local_metrics["value/clipfrac_avg"] = vf_clipfrac_stats.mean()
+                    if "value/param_norm_sum" not in local_metrics: # Ensure it's initialized if not hit in loop
+                        local_metrics["value/param_norm_sum"] = torch.tensor(0.0, device=device)
+
+                if "policy/param_norm_sum" not in local_metrics: # Ensure it's initialized if not hit in loop (e.g. value_init_steps)
+                    local_metrics["policy/param_norm_sum"] = torch.tensor(0.0, device=device)
 
             # Convert metrics to tensors for reduction
             metric_keys = list(local_metrics.keys())

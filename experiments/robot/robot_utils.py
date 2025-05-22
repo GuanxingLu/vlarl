@@ -563,9 +563,9 @@ def forward(
         pixel_values: torch.FloatTensor,
         response: torch.LongTensor,
         pad_token_id: int,
-        context_length: torch.LongTensor,
+        context_length: List[int],
         temperature: float,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Args:
         model (`torch.nn.Module`):
@@ -578,7 +578,7 @@ def forward(
             The tensor containing the response. [B, response_length]
         pad_token_id (`int`):
             The token ID representing the pad token.
-        context_length (`torch.LongTensor`):
+        context_length (`List[int]`):
             The length of the context in the query responses. [B]
         temperature (`float`):
             The temperature for the log probability.

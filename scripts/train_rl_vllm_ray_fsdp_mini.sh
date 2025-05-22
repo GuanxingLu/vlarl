@@ -12,9 +12,9 @@ export PYOPENGL_PLATFORM=egl
 
 # data
 # POSTFIX=spatial
-# POSTFIX=goal
+POSTFIX=goal
 # POSTFIX=object
-POSTFIX=10
+# POSTFIX=10
 DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
 per_device_train_batch_size=1
@@ -44,7 +44,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --data_root_dir ./data/modified_libero_rlds \
     --dataset_name ${DATA_ROOT} \
     --task_suite_name ${DATA_NAME} \
-    --num_trials_per_task 1 \
+    --num_trials_per_task 50 \
     --run_root_dir "checkpoints/debug/root" \
     --adapter_tmp_dir "checkpoints/debug/adapter" \
     --per_device_train_batch_size ${per_device_train_batch_size} \
@@ -55,11 +55,12 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --task_ids "[${TASK_IDS}]" \
     --temperature 1.5 \
     --num_epochs 1 \
-    --learning_rate 2e-6 \
-    --value_learning_rate 5e-4 \
+    --value_init_steps 0 \
+    --learning_rate 4e-5 \
+    --value_learning_rate 4e-5 \
     --policy_max_grad_norm 1.0 \
     --value_max_grad_norm 5.0 \
-    --num_steps 512 \
+    --num_steps 4 \
     --max_env_length 400 \
     --total_episodes 100000 \
     --vllm_tensor_parallel_size 1 \

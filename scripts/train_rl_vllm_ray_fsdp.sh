@@ -17,9 +17,9 @@ export PYOPENGL_PLATFORM=egl
 
 # data
 # POSTFIX=spatial
-# POSTFIX=goal
+POSTFIX=goal
 # POSTFIX=object
-POSTFIX=10
+# POSTFIX=10
 DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
 
@@ -64,11 +64,11 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --local_rollout_forward_batch_size ${local_rollout_batch_size} \
     --actor_num_gpus_per_node "[${ACTOR_GPUS}]" \
     --task_ids "[${TASK_IDS}]" \
-    --temperature 1.8 \
+    --temperature 1.5 \
     --num_epochs 1 \
     --value_init_steps 5 \
-    --learning_rate 5e-5 \
-    --value_learning_rate 1e-4 \
+    --learning_rate 4e-5 \
+    --value_learning_rate 4e-5 \
     --policy_max_grad_norm 1.0 \
     --value_max_grad_norm 5.0 \
     --num_steps 128 \

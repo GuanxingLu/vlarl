@@ -439,9 +439,10 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                     "step": self.step_count[idx],
                     "tokens": action[idx],
                     "prob": probs[idx] if probs is not None else None,
+                    "entropy": (-log_probs[idx]).mean() if log_probs is not None else None,
                     "reward": reward_np_list[idx],
                     "value_preds": values[idx] if values is not None else None,
-                    "prm_rewards": prm_rewards[idx] if prm_rewards is not None else None,
+                    # "prm_rewards": prm_rewards[idx] if prm_rewards is not None else None,
                 }
                 img = add_info_board(img, **img_args)
                 self.replay_images[idx].append(img)
