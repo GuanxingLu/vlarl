@@ -1586,8 +1586,10 @@ class PolicyTrainerRayProcess(RayProcess):
     def save_model(self, model_to_save: PreTrainedModel, processor: AutoProcessor, output_dir: str) -> None:
         if self._rank == 0:
             os.makedirs(output_dir, exist_ok=True)
+        dist.barrier()
 
-            with FSDP.summon_full_params(model_to_save):
+        with FSDP.summon_full_params(model_to_save):
+            if self._rank == 0:
                 if is_peft_model(model_to_save):
                     model_to_save.save_pretrained(output_dir)
                 else:
@@ -1596,7 +1598,9 @@ class PolicyTrainerRayProcess(RayProcess):
 
                 # Save sharded model state
                 logger.info(f'Saving model to {os.path.abspath(output_dir)}')
+            dist.barrier()
 
+        if self._rank == 0:
             # Save HF config and tokenizer on rank 0
             hf_path = os.path.join(output_dir, 'huggingface')
             os.makedirs(hf_path, exist_ok=True)
