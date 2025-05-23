@@ -1,12 +1,18 @@
 #!/bin/bash
-# Usage: bash scripts/train_rl_vllm_ray_fsdp.sh <gpus> <task_ids>
-# Example: bash scripts/train_rl_vllm_ray_fsdp.sh 2,3,4,5,6,7 0,1,2,3,4,5,6,7,8,9
-# Expectation: more than 2 A100 GPUs; 6 GPUs for RTX 3090s backward, but the second broadcast will oom
-# Explanation:
+# Usage: 
+#   bash scripts/train_rl_vllm_ray_fsdp.sh <gpus> <task_ids>
+# Example: 
+#   bash scripts/train_rl_vllm_ray_fsdp.sh 2,3,4,5,6,7 0,1,2,3,4,5,6,7,8,9
+# Devices: more than 2 A100 GPUs; 6 GPUs for RTX 3090s backward, but the second broadcast will oom
+# Parameters:
 # Rollout phase: num_envs = local_rollout_batch_size * world_size
 # e.g. 2 GPUs, local_rollout_batch_size = 1, num_envs = 1 * 2 = 2
 # Training phase: num_mini_batches = local_rollout_batch_size * num_steps / local_mini_batch_size
 # e.g. 2 GPUs, local_rollout_batch_size = 1, num_steps = 128, local_mini_batch_size = 8, num_mini_batches = 1 * 128 / 8 = 16
+# Curriculum:
+# task num = 10, initial state num = 50 -> average curriculum prob = 0.002
+# Expectation:
+# 10 tasks / 10 local_rollout_batch_size x 50 initial states x 200 steps x 2.5s = 25000s = ~7 hours
 # ================================
 
 # export NCCL_P2P_DISABLE=1
@@ -72,7 +78,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --policy_max_grad_norm 1.0 \
     --value_max_grad_norm 5.0 \
     --num_steps 128 \
-    --max_env_length 400 \
+    --max_env_length 200 \
     --total_episodes 100000 \
     --vllm_tensor_parallel_size 1 \
     --vllm_enforce_eager True \
@@ -88,9 +94,8 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --clip_vloss False \
     --norm_adv False \
     --use_curriculum True \
-    --curriculum_temp 0.5 \
-    --curriculum_min_prob 0.05 \
-    --success_history_window 10 \
+    --curriculum_temp 1.0 \
+    --success_history_window 20 \
     --curriculum_recompute_freq 10 \
     --save_freq 20 \
     --save_video True \

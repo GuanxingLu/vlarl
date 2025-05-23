@@ -212,7 +212,7 @@ class Args:
     """Whether to use curriculum learning for sampling tasks"""
     curriculum_temp: float = 1.0
     """Temperature parameter for curriculum sampling (higher = more uniform)"""
-    curriculum_min_prob: float = 0.1
+    curriculum_min_prob: float = 0.0
     """Minimum probability for sampling any task/state"""
     success_history_window: int = 5
     """Number of recent episodes to use for computing success rate"""
@@ -248,8 +248,6 @@ class Args:
     use_quantization: bool = False
     """Whether to 4-bit quantize VLA for LoRA fine-tuning
     => CAUTION: Reduces memory but hurts performance"""
-    merge_model: bool = False
-    """Whether to merge LoRA weights into model backbone"""
     load_model: bool = False
     """Whether to load model from checkpoint to resume training"""
 
@@ -364,10 +362,6 @@ class Args:
     """the number of steps to run in each environment per policy rollout"""
     norm_adv: bool = False
     """Toggles advantages normalization"""
-
-    # async setting
-    async_mode: bool = False
-    """Whether to run the generation in async mode which learns from the second latest policy like Cleanba (https://arxiv.org/abs/2310.00036)"""
 
     # Ray specific
     actor_num_gpus_per_node: List[int] = field(default_factory=lambda: [1])
@@ -1501,11 +1495,11 @@ class PolicyTrainerRayProcess(RayProcess):
                                     pg_grad_norm_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = policy_grad_norm
                                     ratio_stats[epoch_idx, minibatch_idx, gradient_accumulation_idx] = ratio.mean()
 
-                                    # Calculate sum of policy model parameter norms
-                                    policy_param_norm_sum = torch.tensor(0.0, device=device)
-                                    for param in self.model.parameters():
-                                        policy_param_norm_sum += torch.norm(param.data.float(), p=2)
-                                    local_metrics["policy/param_norm_sum"] = policy_param_norm_sum
+                                # Calculate sum of policy model parameter norms
+                                policy_param_norm_sum = torch.tensor(0.0, device=device)
+                                for param in self.model.parameters():
+                                    policy_param_norm_sum += torch.norm(param.data.float(), p=2)
+                                local_metrics["policy/param_norm_sum"] = policy_param_norm_sum
 
                             gradient_accumulation_idx += 1
                         minibatch_idx += 1
@@ -1531,14 +1525,14 @@ class PolicyTrainerRayProcess(RayProcess):
                 local_metrics["objective/scores_std"] = scores.std() if scores.shape[0] > 1 else torch.tensor(0, device=device)
                 local_metrics["objective/advantage_avg"] = advantages.mean()
                 local_metrics["objective/advantage_std"] = advantages.std() if advantages.shape[0] > 1 else torch.tensor(0, device=device)
-                local_metrics["policy/approxkl_avg"] = approxkl_stats.mean()
-                local_metrics["policy/clipfrac_avg"] = pg_clipfrac_stats.mean()
+                # local_metrics["policy/approxkl_avg"] = approxkl_stats.mean()
+                # local_metrics["policy/clipfrac_avg"] = pg_clipfrac_stats.mean()
                 local_metrics["policy/policy_grad_norm"] = pg_grad_norm_stats.mean()
-                local_metrics["policy/ratio_avg"] = ratio_stats.mean()
-                local_metrics["policy/ratio_std"] = ratio_stats.std() if ratio_stats.shape[0] > 1 else torch.tensor(0, device=device)
+                # local_metrics["policy/ratio_avg"] = ratio_stats.mean()
+                # local_metrics["policy/ratio_std"] = ratio_stats.std() if ratio_stats.shape[0] > 1 else torch.tensor(0, device=device)
                 local_metrics["loss/policy_avg"] = pg_loss_stats.mean()
-                local_metrics["loss/value_avg"] = vf_loss_stats.mean()
                 if args.use_value_model:
+                    local_metrics["loss/value_avg"] = vf_loss_stats.mean()
                     local_metrics["value/value_grad_norm"] = vf_grad_norm_stats.mean()
                     local_metrics["value/clipfrac_avg"] = vf_clipfrac_stats.mean()
                     if "value/param_norm_sum" not in local_metrics: # Ensure it's initialized if not hit in loop

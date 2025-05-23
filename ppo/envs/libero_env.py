@@ -9,7 +9,7 @@ from libero.libero.envs import OffScreenRenderEnv
 from ppo.envs.venv import SubprocVectorEnv
 from ppo.utils.util import add_info_board
 from ppo.envs.base import BaseEnv, EnvOutput
-
+from collections import deque
 
 # Append current directory so that interpreter can find experiments.robot
 sys.path.append("../..")
@@ -28,6 +28,8 @@ from experiments.robot.robot_utils import (
     normalize_gripper_action,
 )
 
+# DEBUG = False
+DEBUG = True
 
 class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
     """
@@ -113,7 +115,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         self.success_tracker = {}  # {task_id: {state_id: [success_history]}}
         self.success_history_window = getattr(cfg, "success_history_window", 5)
         self.curriculum_recompute_freq = getattr(cfg, "curriculum_recompute_freq", 10)
-        self.episode_count = 0
 
     def _get_max_step(self, task_suite_name: str) -> int:
         """
@@ -199,14 +200,12 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
             self.success_tracker[task_id] = {}
         
         if state_id not in self.success_tracker[task_id]:
-            self.success_tracker[task_id][state_id] = []
+            self.success_tracker[task_id][state_id] = deque(maxlen=self.success_history_window)
             
         history = self.success_tracker[task_id][state_id]
         history.append(1.0 if success else 0.0)
-        
-        # Maintain fixed window size
-        if len(history) > self.success_history_window:
-            history.pop(0)
+
+        cprint(f"[DEBUG] history: {history}", "yellow")
 
     def _sample_task_state_curriculum(self, task_idx):
         """
@@ -224,26 +223,43 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         task_initial_states = self.initial_states_list[task_idx]
         state_ids = list(range(len(task_initial_states)))
         
-        # If task not in tracker yet, use uniform sampling
-        if actual_task_id not in self.success_tracker:
-            return random.choice(state_ids)
-        
         # Calculate sampling weights (lower success rate = higher weight)
         weights = []
         for state_id in state_ids:
             success_rate = self._get_success_rate(actual_task_id, state_id)
             
-            # Weight inversely proportional to success rate, with temperature
-            weight = (1.0 - success_rate) ** (1.0 / self.curriculum_temp)
+            # Option 1: Exponential weighting.
+            # weight = np.exp((1.0 - success_rate) / self.curriculum_temp)
+
+            # Option 2: Power law weighting.
+            # This option emphasizes states with very low success rates more strongly by raising the failure rate to a power.
+            # A lower temperature (larger exponent 1/T) will lead to a more pronounced focus on the hardest states.
+            weight = ((1.0 - success_rate + 1e-9) ** (1.0 / self.curriculum_temp)) # Add epsilon to avoid 0 ^ anything
             
-            # Ensure minimum sampling probability
-            weight = max(weight, self.curriculum_min_prob)
             weights.append(weight)
         
         # Normalize weights to probabilities
         total_weight = sum(weights)
         probabilities = [w / total_weight for w in weights]
-        
+
+        # Ensure minimum sampling probability
+        # probabilities = [max(p, self.curriculum_min_prob) for p in probabilities]
+        # probabilities = [p / sum(probabilities) for p in probabilities]
+
+        if DEBUG:
+            # cprint(f"[DEBUG] Probabilities: {probabilities}", "yellow")   # [50,]
+            # DEBUG: save the probabilities as histogram
+            import matplotlib.pyplot as plt
+            plt.hist(probabilities, bins=50, edgecolor='black')
+            plt.title('Histogram of Probabilities')
+            plt.xlabel('Probability')
+            plt.ylabel('Frequency')
+            curriculum_dir = os.path.join(self.exp_dir, "curriculum")
+            os.makedirs(curriculum_dir, exist_ok=True)
+            plt.savefig(os.path.join(curriculum_dir, f"task_{actual_task_id}.png"))
+            plt.close()
+            cprint(f"[DEBUG] Saved histogram of probabilities to {os.path.join(curriculum_dir, f'task_{actual_task_id}.png')}", "yellow")
+
         # Sample based on probabilities
         return random.choices(state_ids, weights=probabilities, k=1)[0]
 
@@ -480,7 +496,8 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                     success = reward_np_list[done_idx] >= 1.0
                     processed_task_description = self.task_descriptions[done_idx].lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
                     mp4_path = os.path.join(
-                        self.save_dir, f"rank_{self.env_gpu_id}--episode={self.total_episodes + i}--success={success}--task={processed_task_description}.mp4"
+                        self.save_dir, f"rk_{self.env_gpu_id}--epi={self.total_episodes + i}--s={success}--
+                        task={self.task_id_mapping[done_idx]}--init={self.initial_state_ids[done_idx]}--inst={processed_task_description}.mp4"
                     )
                     save_rollout_video(
                         self.replay_images[done_idx], self.total_episodes + i, success=success, 
@@ -510,7 +527,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 dummy_actions.append(dummy_action)
 
             self.total_episodes += len(done_task_indices)
-            self.episode_count += len(done_task_indices)
 
             # Reset done environments in parallel
             reset_task_indices = [task_id for task_id in done_task_indices if self.initial_state_ids[task_id] != -1]  # skip the task if no more initial state to reset
@@ -528,12 +544,13 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 self.step_count[reset_task_indices] = 0
 
                 if self.save_video:
-                    img = get_libero_image(obs, self.resize_size)
-                    img_args = {
-                        "goal": self.task_descriptions[reset_indices],
-                    }
-                    img = add_info_board(img, **img_args)
-                    self.replay_images[reset_indices].append(img)
+                    for i, task_id in enumerate(reset_task_indices):
+                        img = get_libero_image(obs_np_list[task_id], self.resize_size)
+                        img_args = {
+                            "goal": self.task_descriptions[task_id],
+                        }
+                        img = add_info_board(img, **img_args)
+                        self.replay_images[task_id].append(img)
 
             # Filter out completed tasks with no further states
             obs_np_list = [obs_np_list[idx] for idx in range(len(dones)) if idx not in done_indices or self.initial_state_ids[id_to_task_id[idx]] != -1]
@@ -545,7 +562,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         img_list = [get_libero_image(obs, self.resize_size) for obs in obs_np_list]
         prompt_list = self.task_descriptions    # unchanged
 
-        img_list, prompt_list = preprocess_input_batch(img_list, prompt_list, pre_thought_list=None, center_crop=self.center_crop)
+        img_list, prompt_list = preprocess_input_batch(img_list, prompt_list, pre_thought_list=None, center_crop=True)
 
         next_obs = EnvOutput(pixel_values=img_list, prompts=prompt_list)
 
@@ -554,12 +571,11 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         infos = {
             "task_description": self.task_descriptions,
             "step_count": self.step_count,
-            "step_count_tmp": step_count_tmp,
+            "step_count_tmp": step_count_tmp,   # step count at last step without resetting
         }
         
         # Add curriculum stats to info dict periodically
-        if self.mode == "train" and self.use_curriculum and self.episode_count >= self.curriculum_recompute_freq:
-            self.episode_count = 0
+        if self.mode == "train" and self.use_curriculum:
             infos["curriculum_stats"] = self.get_curriculum_stats()
 
         return next_obs, reward_np_list, dones, infos
