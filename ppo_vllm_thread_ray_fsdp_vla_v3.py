@@ -82,8 +82,6 @@ from ray.util.placement_group import PlacementGroup, placement_group
 from ray.util.queue import Queue as RayQueue
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from vllm import SamplingParams
-from rich.pretty import pprint
-from termcolor import cprint
 from ppo.envs.libero_env import VLAEnv
 from ppo.models.critic import CriticVLA, CriticQwen, CriticFilm
 from ppo.models.prm import DummyRM, QwenProcessRM
@@ -138,12 +136,10 @@ class Args:
     """Seed of the experiment"""
 
     # VLA Model args
-    vla_path: str = "openvla/openvla-7b"
-    """Path to OpenVLA model (on HuggingFace Hub)"""
     load_adapter_checkpoint: Optional[str] = None
     """Path to adapter checkpoint to load"""
     pretrained_checkpoint: str = "openvla/openvla-7b"
-    """For data collection"""
+    """Path to OpenVLA model (on HuggingFace Hub) or local checkpoint"""
     # load_in_8bit: bool = False
     # """(For OpenVLA only) Load with 8-bit quantization"""
     # load_in_4bit: bool = False
@@ -342,8 +338,10 @@ class Args:
     """the beta value of the RLHF objective (KL coefficient)"""
     whiten_rewards: bool = False
     """whether to whiten the rewards"""
-    cliprange: float = 0.2
-    """the clip range"""
+    cliprange_high: float = 0.2
+    """the clip range (high)"""
+    cliprange_low: float = 0.2
+    """the clip range (low)"""
     vf_coef: float = 1.0
     """the value function coefficient"""
     cliprange_value: float = 0.2
@@ -443,6 +441,13 @@ def calculate_runtime_args(args: Args,):
             args.local_mini_batch_size >= 8
         ), f"Per-rank minibatch size {args.local_mini_batch_size} is insufficient for whitening"
 
+    if args.task_ids is None:
+        assert args.local_rollout_batch_size == 10, \
+            f"`local_rollout_batch_size` must be the same as task nums (10), got {args.local_rollout_batch_size}"
+        args.task_ids = list(range(args.local_rollout_batch_size)) * args.world_size
+        args.task_ids = np.array(args.task_ids)
+        logger.info(f"[Args] task_ids: {args.task_ids}")
+
     exp_id = (
         f"ppo+{args.dataset_name}"
         f"+tasks{np.unique(args.task_ids).size}"
@@ -467,7 +472,7 @@ def calculate_runtime_args(args: Args,):
     # if args.image_aug:
     #     exp_id += "--image_aug"
     args.exp_id = exp_id
-    cprint(f"Experiment ID: {exp_id}", "green")
+    cprint(f"[Args] Experiment ID: {exp_id}", "green")
 
     args.unnorm_key = args.task_suite_name
 
@@ -552,7 +557,7 @@ class PolicyTrainerRayProcess(RayProcess):
 
         # build device mesh for FSDP
         world_size = torch.distributed.get_world_size()
-        print(f"[Actor] World size: {world_size}")
+        logger.info(f"[Actor] World size: {world_size}")
         self.device_mesh = init_device_mesh('cuda', mesh_shape=(world_size,), mesh_dim_names=['fsdp'])
 
         self._local_rank = int(os.environ["LOCAL_RANK"])
@@ -562,7 +567,7 @@ class PolicyTrainerRayProcess(RayProcess):
         # Initialize base model
         torch_dtype = torch.bfloat16
         model = AutoModelForVision2Seq.from_pretrained(
-            args.vla_path,
+            args.pretrained_checkpoint,
             attn_implementation="flash_attention_2",
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=True,
@@ -669,7 +674,7 @@ class PolicyTrainerRayProcess(RayProcess):
         if use_value_model:
             if args.value_model_type == "vla":
                 value_model = AutoModelForVision2Seq.from_pretrained(
-                        args.vla_path,
+                        args.pretrained_checkpoint,
                         attn_implementation="flash_attention_2",
                         torch_dtype=torch_dtype,
                         low_cpu_mem_usage=True,
@@ -865,7 +870,7 @@ class PolicyTrainerRayProcess(RayProcess):
             # Process parameters in batches to reduce memory usage
             # batch_size = 8    # low memory
             batch_size = num_params
-            print(f"🔥🔥🔥 Broadcasting {num_params} parameters in batches of {batch_size}")
+            logger.info(f"🔥🔥🔥 Broadcasting {num_params} parameters in batches of {batch_size}")
             
             # Process in batches
             for batch_start in range(0, num_params, batch_size):
@@ -926,7 +931,7 @@ class PolicyTrainerRayProcess(RayProcess):
                 # Explicit cleanup after each batch
                 batch_state_dict = None
                 torch.cuda.empty_cache()
-                print(f"Processed batch {batch_start//batch_size + 1}/{(num_params-1)//batch_size + 1}")
+                logger.info(f"Processed batch {batch_start//batch_size + 1}/{(num_params-1)//batch_size + 1}")
             
             if cache_reset_refs:
                 ray.get(cache_reset_refs)
@@ -995,7 +1000,7 @@ class PolicyTrainerRayProcess(RayProcess):
                         unnorm_key=args.unnorm_key,
                         )
                 )
-                print(f"🔥🔥🔥 Action generation time: {time.time() - generation_start_time:.2f} seconds")
+                logger.info(f"🔥🔥🔥 Action generation time: {time.time() - generation_start_time:.2f} seconds")
                 response_ids_Q.put((actions, response_ids, response_logprobs))
 
         resume_training_step = 1
@@ -1167,7 +1172,7 @@ class PolicyTrainerRayProcess(RayProcess):
                     with timer.timer("broadcast"):
                         _broadcast_to_vllm()
                 if accelerator.is_main_process: #and args.verbose:
-                    print(
+                    logger.info(
                         f"🔥🔥🔥 Syncing weights using shared memory; Time to sync weights: {time.time() - start_time:.2f} seconds"
                     )
 
@@ -1240,13 +1245,13 @@ class PolicyTrainerRayProcess(RayProcess):
                         # logger.info(f"{value=}")
 
                         # TODO: Argh... this is redundant with vllm logprobs. Try to remove it.
-                        # start_time = time.time()
-                        # with timer.timer("forward"):
-                        #     logprob, logits = forward(
-                        #         self.model, query_response, pixel_value, response,
-                        #         args.pad_token_id, context_length, args.temperature
-                        #     )
-                        # torch.cuda.empty_cache()
+                        start_time = time.time()
+                        with timer.timer("forward"):
+                            logprob, logits = forward(
+                                self.model, query_response, pixel_value, response,
+                                args.pad_token_id, context_length, args.temperature
+                            )
+                        torch.cuda.empty_cache()
                         # logger.info(f"Forward time: {time.time() - start_time} seconds")
                         # breakpoint()
 
@@ -1257,7 +1262,7 @@ class PolicyTrainerRayProcess(RayProcess):
                         #     score += processed_score
                         
                         # Accumulate rollout data
-                        # logprobs[step, i : i + args.local_rollout_forward_batch_size] = logprob
+                        logprobs[step, i : i + args.local_rollout_forward_batch_size] = logprob
                         # scores[step, i : i + args.local_rollout_forward_batch_size] = score
                         values[step, i : i + args.local_rollout_forward_batch_size] = value
 
@@ -1394,7 +1399,7 @@ class PolicyTrainerRayProcess(RayProcess):
                             mb_responses = b_responses[micro_batch_inds]
                             mb_queries = b_queries[micro_batch_inds]
                             mb_pixel_values = b_pixel_values[micro_batch_inds]
-                            # mb_logprobs = b_logprobs[micro_batch_inds]
+                            mb_logprobs = b_logprobs[micro_batch_inds]
                             mb_return = b_returns[micro_batch_inds]
                             mb_values = b_values[micro_batch_inds]
 
@@ -1444,19 +1449,19 @@ class PolicyTrainerRayProcess(RayProcess):
                                     self.model, mb_query_responses, mb_pixel_values, mb_responses, 
                                     args.pad_token_id, context_length, args.temperature
                                 )
-                                if epoch_idx == 0:
-                                    # This can avoid additional forward pass in the rollout phase to get old logprobs. 
-                                    # See the following blog post for more details:
-                                    # https://costa.sh/blog-understanding-why-there-isn't-a-log-probability-in-trpo-and-ppo's-objective
-                                    b_logprobs[micro_batch_inds] = new_logprobs.detach()
+                                # if epoch_idx == 0:
+                                #     # This can avoid additional forward pass in the rollout phase to get old logprobs. 
+                                #     # See the following blog post for more details:
+                                #     # https://costa.sh/blog-understanding-why-there-isn't-a-log-probability-in-trpo-and-ppo's-objective
+                                #     b_logprobs[micro_batch_inds] = new_logprobs.detach()
                                 # NOTE: action logprobs = sum(logprobs)
-                                mb_logprobs = b_logprobs[micro_batch_inds]  # old logprobs
+                                # mb_logprobs = b_logprobs[micro_batch_inds]  # old logprobs
                                 new_logprobs = torch.sum(new_logprobs, dim=-1)
                                 mb_logprobs = torch.sum(mb_logprobs, dim=-1)
                                 logprobs_diff = new_logprobs - mb_logprobs
                                 ratio = torch.exp(logprobs_diff)
                                 pg_losses = -mb_advantage * ratio
-                                pg_losses2 = -mb_advantage * torch.clamp(ratio, 1.0 - args.cliprange, 1.0 + args.cliprange)
+                                pg_losses2 = -mb_advantage * torch.clamp(ratio, 1.0 - args.cliprange_low, 1.0 + args.cliprange_high)
                                 pg_loss = torch.max(pg_losses, pg_losses2).mean()
                                 
                                 self.policy_optimizer.zero_grad()
@@ -1576,12 +1581,12 @@ class PolicyTrainerRayProcess(RayProcess):
                 os.makedirs(checkpoint_dir, exist_ok=True)
                 step_dir = os.path.join(checkpoint_dir, f"step_{training_step}")
                 os.makedirs(step_dir, exist_ok=True)
-                print(f"Saving model at step {training_step} to {step_dir}")
+                logger.info(f"Saving model at step {training_step} to {step_dir}")
                 self.save_model(self.model, processor, step_dir)
         
-        print(f"Saving final model at step {training_step} to {args.exp_dir}")
+        logger.info(f"Saving final model at step {training_step} to {args.exp_dir}")
         self.save_model(self.model, processor, args.exp_dir)
-        print("finished training")
+        logger.info("finished training")
 
     def save_model(self, model_to_save: PreTrainedModel, processor: AutoProcessor, output_dir: str) -> None:
         if self._rank == 0:
@@ -1622,8 +1627,8 @@ def kill_ray_cluster_if_a_worker_dies(object_refs: List[Any], stop_event: thread
             except ray.exceptions.GetTimeoutError:
                 pass
             except Exception as e:
-                print(e)
-                print(f"Actor {ref} died")
+                logger.info(e)
+                logger.info(f"Actor {ref} died")
                 time.sleep(120)
                 ray.shutdown()
                 os._exit(1)  # Force shutdown the process
@@ -1666,7 +1671,7 @@ class ModelGroup:
 
         # Setup worker models
         for rank in range(1, world_size):
-            print(f"{rank=}, {world_size=}, {master_addr=}, {master_port=}")
+            logger.info(f"{rank=}, {world_size=}, {master_addr=}, {master_port=}")
             scheduling_strategy = PlacementGroupSchedulingStrategy(
                 placement_group=self.pg,
                 placement_group_bundle_index=get_bundle_index(rank, self.num_gpus_per_node),
@@ -1681,7 +1686,7 @@ class ModelGroup:
 
 @draccus.wrap()
 def main(args: Args):
-    print(f"PPO Fine-tuning OpenVLA Model `{args.vla_path}` on `{args.dataset_name}`")
+    logger.info(f"PPO Fine-tuning OpenVLA Model `{args.pretrained_checkpoint}` on `{args.dataset_name}`")
 
     calculate_runtime_args(args)
 
@@ -1698,7 +1703,8 @@ def main(args: Args):
             if f.endswith(".mp4"):
                 os.remove(os.path.join(video_dir, f))
 
-    set_seed_everywhere(args.seed)
+    # NOTE: this may affect the performance.
+    # set_seed_everywhere(args.seed)
 
     all_configs = {}
     all_configs.update(**asdict(args))
@@ -1721,10 +1727,11 @@ def main(args: Args):
     )
 
     # [OpenVLA] Get Hugging Face processor
+    cprint(f"Loading processor from {args.pretrained_checkpoint}", "yellow")
     processor = None
     if args.model_family == "openvla":
         processor = get_processor(args)
-    cprint(f"Loaded processor from {args.vla_path}", "green")
+    cprint(f"Loaded processor from {args.pretrained_checkpoint}", "green")
 
     pg = None
     bundles = [{"GPU": actor_num_gpus, "CPU": actor_num_gpus * 10} for actor_num_gpus in args.actor_num_gpus_per_node]
@@ -1751,7 +1758,7 @@ def main(args: Args):
         num_engines=args.vllm_num_engines,
         tensor_parallel_size=args.vllm_tensor_parallel_size,
         enforce_eager=args.vllm_enforce_eager,
-        pretrain=args.vla_path,
+        pretrain=args.pretrained_checkpoint,
         revision=None,
         seed=args.seed,
         enable_prefix_caching=args.enable_prefix_caching,
@@ -1760,7 +1767,7 @@ def main(args: Args):
     )
     # vllm_engines = None
 
-    print("======== all models initialized =========")
+    logger.info("======== all models initialized =========")
 
     # Save dataset statistics for inference
     action_tokenizer = ActionTokenizer(processor.tokenizer)
@@ -1768,7 +1775,7 @@ def main(args: Args):
         action_tokenizer,
         processor.tokenizer,
         image_transform=processor.image_processor.apply_transform,
-        prompt_builder_fn=PurePromptBuilder if "v01" not in args.vla_path else VicunaV15ChatPromptBuilder,
+        prompt_builder_fn=PurePromptBuilder if "v01" not in args.pretrained_checkpoint else VicunaV15ChatPromptBuilder,
     )
     logger.info(f"processor.image_processor.input_sizes: {processor.image_processor.input_sizes}")
     vla_dataset = RLDSDataset(
@@ -1781,7 +1788,7 @@ def main(args: Args):
     )
     save_dataset_statistics(vla_dataset.dataset_statistics, args.exp_dir)
 
-    print("======== all datasets initialized =========")
+    logger.info("======== all datasets initialized =========")
 
     refs = []
     for i, policy_model in enumerate(policy_group.models):
@@ -1813,10 +1820,10 @@ def main(args: Args):
     stop_event.set()
 
     if args.push_to_hub:
-        print("Pushing model to hub")
+        logger.info("Pushing model to hub")
         # TODO: push to hub
 
 
 if __name__ == "__main__":
     main()
-    print("RL Done!")
+    logger.info("RL Done!")

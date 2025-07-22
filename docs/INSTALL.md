@@ -6,7 +6,9 @@ For possible errors, please see [ERROR_CATCH.md](ERROR_CATCH.md). If you encount
 
 ```bash
 # Install ubuntu dependencies
-apt-get -y update && apt-get install -y cmake libegl-dev
+apt-get -y update && apt-get install -y cmake libegl-dev git-lfs
+
+# apt-get install -y libgl1 libx11-dev libglew-dev
 
 # Conda environment setup
 conda create -n vlarl python=3.10

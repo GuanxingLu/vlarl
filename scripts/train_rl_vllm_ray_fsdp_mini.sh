@@ -40,7 +40,7 @@ echo "local_rollout_batch_size=${local_rollout_batch_size}"
 
 CUDA_VISIBLE_DEVICES=$GPUS python \
     ppo_vllm_thread_ray_fsdp_vla_v3.py \
-    --vla_path "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
+    --pretrained_checkpoint "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
     --data_root_dir ./data/modified_libero_rlds \
     --dataset_name ${DATA_ROOT} \
     --task_suite_name ${DATA_NAME} \

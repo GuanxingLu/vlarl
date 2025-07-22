@@ -49,4 +49,14 @@ conda install -c menpo glfw3
 
 export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
+
+# test
+python test/test_libero.py
+```
+
+- vllm error: Fatal Python error: Floating point exception
+Ref: https://github.com/vllm-project/vllm/issues/4392
+
+```bash
+pip install nvidia-cublas-cu12==12.4.5.8
 ```

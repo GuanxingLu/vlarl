@@ -28,8 +28,8 @@ from experiments.robot.robot_utils import (
     normalize_gripper_action,
 )
 
-# DEBUG = False
-DEBUG = True
+DEBUG = False
+# DEBUG = True
 
 class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
     """
@@ -47,11 +47,13 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         super().__init__(seed=cfg.seed)
         self.env_gpu_id = getattr(cfg, "env_gpu_id", 0)
 
-        selected_device = (
-            os.environ.get("CUDA_VISIBLE_DEVICES", None)
-            if os.environ.get("MUJOCO_EGL_DEVICE_ID", None) is None
-            else os.environ.get("MUJOCO_EGL_DEVICE_ID", None)
-        )
+        # selected_device = (
+        #     os.environ.get("CUDA_VISIBLE_DEVICES", None)
+        #     if os.environ.get("MUJOCO_EGL_DEVICE_ID", None) is None
+        #     else os.environ.get("MUJOCO_EGL_DEVICE_ID", None)
+        # )
+        selected_device = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+
         cprint(f"[DEBUG] Selected device: {selected_device}", "yellow")
         if mode == "eval" and selected_device is not None:  # TODO: remove this hack
             self.gpu_ids = [int(device) for device in selected_device.split(",")]
@@ -272,9 +274,18 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         """
         stats = {}
         for task_id in self.success_tracker:
+            state_success_rates = []
             for state_id in self.success_tracker[task_id]:
                 success_rate = self._get_success_rate(task_id, state_id)
-                stats[f"task_{task_id}_state_{state_id}_success"] = success_rate
+                state_success_rates.append(success_rate)
+            
+            # Compute average success rate for the task
+            if state_success_rates:
+                avg_success_rate = sum(state_success_rates) / len(state_success_rates)
+            else:
+                avg_success_rate = 0.0
+            
+            stats[f"task_{task_id}"] = avg_success_rate
         
         return stats
 
@@ -330,7 +341,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 "camera_heights": resolution,
                 "camera_widths": resolution,
                 "render_gpu_device_id": assigned_gpu,  # Assign specific GPU
-                "reward_shaping": True,
+                # "reward_shaping": True,
             }
             # cprint(f"[DEBUG] Env {id} assigned to GPU {assigned_gpu}", "yellow")
             # cprint(f"[DEBUG] Env args: {env_args}", "yellow")
@@ -496,7 +507,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                     success = reward_np_list[done_idx] >= 1.0
                     processed_task_description = self.task_descriptions[done_idx].lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
                     mp4_path = os.path.join(
-                        self.save_dir, f"rk_{self.env_gpu_id}--epi={self.total_episodes + i}--s={success}--
+                        self.save_dir, f"rk_{self.env_gpu_id}--epi={self.total_episodes + i}--s={success}--\
                         task={self.task_id_mapping[done_idx]}--init={self.initial_state_ids[done_idx]}--inst={processed_task_description}.mp4"
                     )
                     save_rollout_video(
