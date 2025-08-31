@@ -1545,24 +1545,26 @@ class PolicyTrainerRayProcess(RayProcess):
     def save_model(self, model_to_save: PreTrainedModel, processor: AutoProcessor, output_dir: str) -> None:
         if self._rank == 0:
             os.makedirs(output_dir, exist_ok=True)
+        dist.barrier()
 
-            with FSDP.summon_full_params(model_to_save):
+        with FSDP.summon_full_params(model_to_save):
+            if self._rank == 0:
                 if is_peft_model(model_to_save):
                     model_to_save.save_pretrained(output_dir)
                 else:
                     model_state_dict = model_to_save.state_dict()
                     torch.save(model_state_dict, os.path.join(output_dir, 'model.pt'))
-
-                # Save sharded model state
                 logger.info(f'Saving model to {os.path.abspath(output_dir)}')
+            dist.barrier()
 
-            # Save HF config and tokenizer on rank 0
+        if self._rank == 0:
             hf_path = os.path.join(output_dir, 'huggingface')
             os.makedirs(hf_path, exist_ok=True)
             if hasattr(model_to_save, "config"):
-                model_to_save._fsdp_wrapped_module.config.save_pretrained(hf_path)
-
-            # Save the processor
+                if hasattr(model_to_save, '_fsdp_wrapped_module'):
+                    model_to_save._fsdp_wrapped_module.config.save_pretrained(hf_path)
+                else:
+                    model_to_save.config.save_pretrained(hf_path)
             processor.save_pretrained(output_dir)
 
         dist.barrier()
