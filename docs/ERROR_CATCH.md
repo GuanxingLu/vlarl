@@ -60,3 +60,9 @@ Ref: https://github.com/vllm-project/vllm/issues/4392
 ```bash
 pip install nvidia-cublas-cu12==12.4.5.8
 ```
+
+- No network case
+```bash
+cd <pretrained_checkpoint>
+# Remove "auto_map" in preprocessor_config.json and tokenizer_config.json
+```

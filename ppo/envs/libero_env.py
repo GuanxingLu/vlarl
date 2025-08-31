@@ -45,17 +45,18 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
             mode (str): Mode of the environment, either "train" or "eval".
         """
         super().__init__(seed=cfg.seed)
-        self.env_gpu_id = getattr(cfg, "env_gpu_id", 0)
+        self.env_gpu_id = cfg.env_gpu_id
 
-        # selected_device = (
-        #     os.environ.get("CUDA_VISIBLE_DEVICES", None)
-        #     if os.environ.get("MUJOCO_EGL_DEVICE_ID", None) is None
-        #     else os.environ.get("MUJOCO_EGL_DEVICE_ID", None)
-        # )
-        selected_device = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+        selected_device = (
+            os.environ.get("CUDA_VISIBLE_DEVICES", None)
+            if os.environ.get("MUJOCO_EGL_DEVICE_ID", None) is None
+            else os.environ.get("MUJOCO_EGL_DEVICE_ID", None)
+        )
+        # selected_device = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+        assert mode in ["train", "eval"], f"Invalid mode: {mode}"
 
-        cprint(f"[DEBUG] Selected device: {selected_device}", "yellow")
         if mode == "eval" and selected_device is not None:  # TODO: remove this hack
+            cprint(f"[DEBUG] Selected device: {selected_device}", "yellow")
             self.gpu_ids = [int(device) for device in selected_device.split(",")]
             self.gpu_ids = [self.gpu_ids[self.env_gpu_id]]
         else:
@@ -73,7 +74,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         self.exp_dir = cfg.exp_dir
         self.cfg = cfg
         self.mode = mode
-        assert mode in ["train", "eval"], f"Invalid mode: {mode}"
         self.n_agents = 1  # Number of agents (default: 1) NOT USED
         self.task_id_mapping = {}  # Map from env index to actual task ID
 
@@ -119,15 +119,6 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         self.curriculum_recompute_freq = getattr(cfg, "curriculum_recompute_freq", 10)
 
     def _get_max_step(self, task_suite_name: str) -> int:
-        """
-        Determine max_step dynamically based on the task suite.
-
-        Args:
-            task_suite_name (str): Name of the task suite.
-
-        Returns:
-            int: Maximum number of steps allowed for the task.
-        """
         if self.max_env_length > 0:
             # for debugging
             cprint(f"[Warning] Using max_step from config: {self.max_env_length}", "red")
@@ -340,7 +331,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 "bddl_file_name": task_bddl_file,
                 "camera_heights": resolution,
                 "camera_widths": resolution,
-                "render_gpu_device_id": assigned_gpu,  # Assign specific GPU
+                # "render_gpu_device_id": assigned_gpu,  # Assign specific GPU
                 # "reward_shaping": True,
             }
             # cprint(f"[DEBUG] Env {id} assigned to GPU {assigned_gpu}", "yellow")
@@ -506,10 +497,13 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                     done_idx = done_indices[i]
                     success = reward_np_list[done_idx] >= 1.0
                     processed_task_description = self.task_descriptions[done_idx].lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
-                    mp4_path = os.path.join(
-                        self.save_dir, f"rk_{self.env_gpu_id}--epi={self.total_episodes + i}--s={success}--\
-                        task={self.task_id_mapping[done_idx]}--init={self.initial_state_ids[done_idx]}--inst={processed_task_description}.mp4"
+                    filename = (
+                        f"rk_{self.env_gpu_id}--epi={self.total_episodes + i}--s={success}--"
+                        f"task={self.task_id_mapping[done_idx]}--init={self.initial_state_ids[done_idx]}--"
+                        f"inst={processed_task_description}.mp4"
                     )
+                    mp4_path = os.path.join(self.save_dir, filename)
+
                     save_rollout_video(
                         self.replay_images[done_idx], self.total_episodes + i, success=success, 
                         task_description=self.task_descriptions[done_idx], log_file=None, mp4_path=mp4_path,

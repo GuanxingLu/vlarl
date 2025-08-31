@@ -16,7 +16,7 @@ authors = [
 description = "VLA-RL: Towards Masterful and General Robotic Manipulation with Scalable Reinforcement Learning"
 version = "0.0.3"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.11"
 keywords = ["vision-language-action", "reinforcement learning", "robotic manipulation"]
 license = {file = "LICENSE"}
 classifiers = [
@@ -35,7 +35,6 @@ dependencies = [
     "accelerate",
     "draccus",
     "einops",
-    #"flash_attn==2.5.5",      # Here for documentation -- install *AFTER* editable install (follow README)
     "huggingface_hub",
     "json-numpy",
     "jsonlines",
@@ -46,15 +45,15 @@ dependencies = [
     "sentencepiece",
     "timm==0.9.10",
     "tokenizers",
-    #"torch==2.2.0",
-    #"torchvision==0.17.0",
-    #"torchaudio==2.2.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "torchaudio>=2.0.0",
     "transformers==4.48.2",
     "wandb",
     "tensorflow",
     "tensorflow_datasets",
     "tensorflow_graphics",
-    "dlimp @ git+ssh://git@github.com/moojink/dlimp_openvla",
+    "dlimp @ git+https://github.com/moojink/dlimp_openvla.git",
     "pyzmq",
     "vllm==0.7.2",
     "ray==2.40.0",
@@ -104,3 +103,12 @@ ignore = ["F722"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402", "F401"]
+
+[tool.uv]
+dev-dependencies = [
+    "black>=24.2.0",
+    "gpustat",
+    "ipython",
+    "pre-commit",
+    "ruff>=0.2.2",
+]

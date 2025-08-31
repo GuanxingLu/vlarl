@@ -27,6 +27,16 @@ OPENVLA_V01_SYSTEM_PROMPT = (
     "The assistant gives helpful, detailed, and polite answers to the user's questions."
 )
 
+# Flag to track if custom classes are registered
+_CUSTOM_CLASSES_REGISTERED = False
+def register_custom_classes():
+    global _CUSTOM_CLASSES_REGISTERED
+    if not _CUSTOM_CLASSES_REGISTERED:
+        AutoConfig.register("openvla", OpenVLAConfig)
+        AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
+        AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
+        AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+        _CUSTOM_CLASSES_REGISTERED = True
 
 def get_vla(cfg, device=DEVICE):
     """Loads and returns a VLA model from checkpoint."""
@@ -35,10 +45,7 @@ def get_vla(cfg, device=DEVICE):
     print("[*] Loading in BF16 with Flash-Attention Enabled")
 
     # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
-    AutoConfig.register("openvla", OpenVLAConfig)
-    AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-    AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-    AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+    register_custom_classes()
 
     print(f"cfg.pretrained_checkpoint: {cfg.pretrained_checkpoint}")
     vla = AutoModelForVision2Seq.from_pretrained(
@@ -75,7 +82,14 @@ def get_vla(cfg, device=DEVICE):
 
 def get_processor(cfg):
     """Get VLA model's Hugging Face processor."""
-    processor = AutoProcessor.from_pretrained(cfg.pretrained_checkpoint, trust_remote_code=True)
+    # Register OpenVLA model to HF Auto Classes to use local code
+    register_custom_classes()
+    
+    processor = AutoProcessor.from_pretrained(
+        cfg.pretrained_checkpoint, 
+        # trust_remote_code=True,
+        trust_remote_code=False,  # for bad network case
+    )
     return processor
 
 

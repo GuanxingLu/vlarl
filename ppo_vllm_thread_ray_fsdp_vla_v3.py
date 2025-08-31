@@ -104,7 +104,7 @@ from prismatic.util.data_utils import PaddedCollatorForActionPrediction
 from prismatic.vla.action_tokenizer import ActionTokenizer
 from prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
-from experiments.robot.openvla_utils import get_processor
+from experiments.robot.openvla_utils import get_processor, register_custom_classes
 from experiments.robot.robot_utils import (
     disable_dropout_in_model,
     first_true_indices,
@@ -444,7 +444,8 @@ def calculate_runtime_args(args: Args,):
     if args.task_ids is None:
         assert args.local_rollout_batch_size == 10, \
             f"`local_rollout_batch_size` must be the same as task nums (10), got {args.local_rollout_batch_size}"
-        args.task_ids = list(range(args.local_rollout_batch_size)) * args.world_size
+        # args.task_ids = list(range(args.local_rollout_batch_size)) * args.world_size
+        args.task_ids = [0 for _ in range(args.local_rollout_batch_size * args.world_size)]
         args.task_ids = np.array(args.task_ids)
         logger.info(f"[Args] task_ids: {args.task_ids}")
 
@@ -538,10 +539,11 @@ class PolicyTrainerRayProcess(RayProcess):
         global logger
         logger = init_logger(__name__, self._rank)
         # Register OpenVLA model to HF Auto Classes
-        AutoConfig.register("openvla", OpenVLAConfig)
-        AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-        AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-        AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+        # AutoConfig.register("openvla", OpenVLAConfig)
+        # AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
+        # AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
+        # AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+        register_custom_classes()
         
         if getattr(args, "vllm_num_engines", 0) > 0:
             # To prevent hanging during NCCL synchronization of weights between deepspeed and vLLM.
@@ -571,7 +573,8 @@ class PolicyTrainerRayProcess(RayProcess):
             attn_implementation="flash_attention_2",
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=True,
-            trust_remote_code=True,
+            # trust_remote_code=True,
+            trust_remote_code=False,  # for bad network case
         )
         # NOTE: 256 is the max image tokens for openvla
         self.hf_config = deepcopy(model.config)
@@ -628,21 +631,21 @@ class PolicyTrainerRayProcess(RayProcess):
         fsdp_precision_policy = MixedPrecision(
             param_dtype=torch.bfloat16, reduce_dtype=torch.float32, buffer_dtype=torch.float32
         )
-        self.model = FSDP(
-            model,
-            cpu_offload=cpu_offload,
-            param_init_fn=init_fn,
-            use_orig_params=False,
-            auto_wrap_policy=auto_wrap_policy,
-            device_id=torch.cuda.current_device(),
-            sharding_strategy=fsdp_sharding_strategy,
-            mixed_precision=fsdp_precision_policy,
-            sync_module_states=True,
-            device_mesh=self.device_mesh,
-            forward_prefetch=False,
-        )
-        del model
-        # self.model = model.to(device=torch.device("cuda"))    # w/o FSDP
+        # self.model = FSDP(
+        #     model,
+        #     cpu_offload=cpu_offload,
+        #     param_init_fn=init_fn,
+        #     use_orig_params=False,
+        #     auto_wrap_policy=auto_wrap_policy,
+        #     device_id=torch.cuda.current_device(),
+        #     sharding_strategy=fsdp_sharding_strategy,
+        #     mixed_precision=fsdp_precision_policy,
+        #     sync_module_states=True,
+        #     device_mesh=self.device_mesh,
+        #     forward_prefetch=False,
+        # )
+        # del model
+        self.model = model.to(torch.cuda.current_device())    # w/o FSDP
         logger.info("[Actor] Initialized FSDP model")
         log_gpu_memory_usage("[Actor] After model init", rank=self._rank, logger=logger, level=logging.INFO)
         self.policy_optimizer = torch.optim.AdamW(
@@ -678,7 +681,8 @@ class PolicyTrainerRayProcess(RayProcess):
                         attn_implementation="flash_attention_2",
                         torch_dtype=torch_dtype,
                         low_cpu_mem_usage=True,
-                        trust_remote_code=True,
+                        # trust_remote_code=True,
+                        trust_remote_code=False,  # for bad network case
                     )
                 log_gpu_memory_usage("[Critic] After value model init", rank=self._rank, logger=logger, level=logging.INFO)
                 if args.value_adapter_dir is not None:
@@ -722,24 +726,24 @@ class PolicyTrainerRayProcess(RayProcess):
                 value_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
 
             logger.info(f'[Critic] wrap_policy: {auto_wrap_policy}')
-            # self.value_model = value_model.to(device=torch.cuda.current_device())
             # fsdp_precision_policy = MixedPrecision(
             #     param_dtype=torch.float32, reduce_dtype=torch.float32, buffer_dtype=torch.float32
             # )
-            self.value_model = FSDP(
-                value_model,
-                cpu_offload=cpu_offload,
-                param_init_fn=init_fn,
-                use_orig_params=False,
-                device_id=torch.cuda.current_device(),
-                auto_wrap_policy=auto_wrap_policy,
-                sharding_strategy=fsdp_sharding_strategy,
-                mixed_precision=fsdp_precision_policy,
-                sync_module_states=True,
-                device_mesh=self.device_mesh,
-                forward_prefetch=False,
-            )
-            del value_model
+            # self.value_model = FSDP(
+            #     value_model,
+            #     cpu_offload=cpu_offload,
+            #     param_init_fn=init_fn,
+            #     use_orig_params=False,
+            #     device_id=torch.cuda.current_device(),
+            #     auto_wrap_policy=auto_wrap_policy,
+            #     sharding_strategy=fsdp_sharding_strategy,
+            #     mixed_precision=fsdp_precision_policy,
+            #     sync_module_states=True,
+            #     device_mesh=self.device_mesh,
+            #     forward_prefetch=False,
+            # )
+            # del value_model
+            self.value_model = value_model.to(torch.cuda.current_device())  # w/o FSDP
             log_gpu_memory_usage("[Critic] After value model FSDP wrapping", rank=self._rank, logger=logger, level=logging.INFO)
             self.value_optimizer = torch.optim.AdamW(
                 self.value_model.parameters(),
@@ -789,12 +793,14 @@ class PolicyTrainerRayProcess(RayProcess):
         local_rollout_indices = slice(self._rank * args.local_rollout_batch_size, (self._rank + 1) * args.local_rollout_batch_size)
 
         args.task_ids = args.task_ids[local_rollout_indices]
-        args.env_gpu_id = self._rank
+        # args.env_gpu_id = self._rank
+        args.env_gpu_id = 0
         logger.info(f"Current Device ID: {self._rank}; Task IDs: {args.task_ids}")
         train_envs = VLAEnv(cfg=args, mode="train")
+        # train_envs = VLAEnv(cfg=args, mode="eval")
         action_dim = train_envs.action_space[0]
 
-        padding_side = "right"
+        padding_side = "right"  # Ref: https://github.com/openvla/openvla/issues/189
 
         accelerator = Namespace()
         accelerator.process_index = self._rank
@@ -854,7 +860,6 @@ class PolicyTrainerRayProcess(RayProcess):
             # Get parameter names first without loading full params
             param_names = []
             if is_peft_model(model):
-                # Get list of parameter names that will need to be broadcast
                 with torch.no_grad():
                     for name, _ in model.named_parameters():
                         processed_name = name.removeprefix("base_model.model.").replace(".base_layer", "")
@@ -862,76 +867,58 @@ class PolicyTrainerRayProcess(RayProcess):
                             if processed_name.startswith("modules_to_save.default."):
                                 processed_name = processed_name.replace("modules_to_save.default.", "")
                             param_names.append(processed_name)
+                    num_params = len(param_names)
             else:
-                for name, _ in model.named_parameters():
-                    param_names.append(name)
-                    
-            num_params = len(param_names)
-            # Process parameters in batches to reduce memory usage
-            # batch_size = 8    # low memory
-            batch_size = num_params
-            logger.info(f"🔥🔥🔥 Broadcasting {num_params} parameters in batches of {batch_size}")
-            
-            # Process in batches
-            for batch_start in range(0, num_params, batch_size):
-                batch_end = min(batch_start + batch_size, num_params)
-                batch_names = param_names[batch_start:batch_end]
-                
-                # For this batch only, summon full parameters
-                with FSDP.summon_full_params(model, writeback=False):   # this takes up a lot of memory
-                    if is_peft_model(model):
-                        # Create a modified copy of the model for broadcasting
-                        # instead of directly modifying the original model
-                        with torch.no_grad():
-                            if batch_start == 0:  # Only merge once at the beginning
-                                logger.info("Merging adapter")
-                                model.merge_adapter()
-                            
-                            # Get only the batch parameters instead of full state dict
-                            batch_state_dict = {}
-                            for name, param in model.named_parameters():
-                                processed_name = name.removeprefix("base_model.model.").replace(".base_layer", "")
-                                if processed_name in batch_names or name in batch_names:
-                                    if model.prefix not in processed_name and "original_module" not in processed_name:
-                                        if processed_name.startswith("modules_to_save.default."):
-                                            key = processed_name.replace("modules_to_save.default.", "")
-                                            batch_state_dict[key] = param.data
-                                        else:
-                                            batch_state_dict[processed_name] = param.data
-                            
-                            if batch_end == num_params:  # Only unmerge at the end
-                                logger.info("Unmerging adapter")
-                                model.unmerge_adapter()
-                    else:
-                        # Get only the batch parameters
-                        batch_state_dict = {}
-                        for name, param in model.named_parameters():
-                            if name in batch_names:
-                                batch_state_dict[name] = param.data
+                num_params = list(model.named_parameters())
 
-                    # Broadcast this batch of parameters
-                    for name, param in batch_state_dict.items():
-                        is_last_param = (batch_end == num_params and name == list(batch_state_dict.keys())[-1])
+            logger.info(f"🔥🔥🔥 Broadcasting {num_params} parameters")
+            
+            with FSDP.summon_full_params(model, writeback=False):   # this takes up a lot of memory
+                if is_peft_model(model):
+                    # Create a modified copy of the model for broadcasting
+                    # instead of directly modifying the original model
+                    with torch.no_grad():
+                        logger.info("Merging adapter")
+                        model.merge_adapter()
                         
-                        # Fire all vllm engines for broadcast
-                        if torch.distributed.get_rank() == 0:
-                            shape = param.shape
-                            refs = [
-                                engine.update_weight.remote(
-                                    name, dtype=param.dtype, shape=shape, empty_cache=is_last_param
-                                )
-                                for engine in vllm_engines
-                            ]
+                        state_dict = {}
+                        for name, param in model.named_parameters():
+                            processed_name = name.removeprefix("base_model.model.").replace(".base_layer", "")
+                            if processed_name in param_names or name in param_names:
+                                if model.prefix not in processed_name and "original_module" not in processed_name:
+                                    if processed_name.startswith("modules_to_save.default."):
+                                        key = processed_name.replace("modules_to_save.default.", "")
+                                        state_dict[key] = param.data
+                                    else:
+                                        state_dict[processed_name] = param.data
                         
-                            # Only broadcast from rank 0
-                            torch.distributed.broadcast(param.data, 0, group=self.model_update_group)
-                            ray.get(refs)
-                            refs = None  # Clear refs to free memory
-                
-                # Explicit cleanup after each batch
-                batch_state_dict = None
-                torch.cuda.empty_cache()
-                logger.info(f"Processed batch {batch_start//batch_size + 1}/{(num_params-1)//batch_size + 1}")
+                        logger.info("Unmerging adapter")
+                        model.unmerge_adapter()
+                else:
+                    # Get all parameters
+                    state_dict = {}
+                    for name, param in model.named_parameters():
+                        state_dict[name] = param.data
+
+                # Broadcast all parameters
+                param_list = list(state_dict.items())
+                for i, (name, param) in enumerate(param_list):
+                    is_last_param = (i == len(param_list) - 1)
+                    
+                    # Fire all vllm engines for broadcast
+                    if torch.distributed.get_rank() == 0:
+                        shape = param.shape
+                        refs = [
+                            engine.update_weight.remote(
+                                name, dtype=param.dtype, shape=shape, empty_cache=is_last_param
+                            )
+                            for engine in vllm_engines
+                        ]
+                    
+                        # Only broadcast from rank 0
+                        torch.distributed.broadcast(param.data, 0, group=self.model_update_group)
+                        ray.get(refs)
+                        refs = None  # Clear refs to free memory
             
             if cache_reset_refs:
                 ray.get(cache_reset_refs)
@@ -965,8 +952,6 @@ class PolicyTrainerRayProcess(RayProcess):
             generation_config: SamplingParams,
             response_ids_Q: Queue,
             param_prompt_Q: Queue,
-            num_training_steps: int,
-            resume_training_step: int,
         ):
             llm = vllm_engines[0]
             while True:
@@ -1011,8 +996,6 @@ class PolicyTrainerRayProcess(RayProcess):
                     generation_config,
                     response_ids_Q,
                     param_prompt_Q,
-                    args.num_training_steps,
-                    resume_training_step,
                 ),
             )
             thread.start()
@@ -1157,12 +1140,12 @@ class PolicyTrainerRayProcess(RayProcess):
 
         resume_training_step = 1
         global_step = 0
-        # episodic_returns = Queue(maxsize=args.rollout_batch_size)
-        # episodic_lengths = Queue(maxsize=args.rollout_batch_size)
+        episodic_returns = Queue(maxsize=args.local_rollout_batch_size)
+        episodic_lengths = Queue(maxsize=args.local_rollout_batch_size)
         # Begin training loop
         for training_step in range(resume_training_step, args.num_training_steps):
-            episodic_returns = []
-            episodic_lengths = []
+            # episodic_returns = []
+            # episodic_lengths = []
             episode += args.rollout_batch_size  # rollout batch size is the number of parallel environments
 
             if training_step != 1:
@@ -1316,8 +1299,10 @@ class PolicyTrainerRayProcess(RayProcess):
                 # compute episodic reward
                 for i in range(args.local_rollout_batch_size):
                     if local_dones[i]:
-                        episodic_returns.append(1.0 if local_rewards[i].item() > 0 else 0.0)
-                        episodic_lengths.append(local_infos["step_count_tmp"][i])
+                        # episodic_returns.append(1.0 if local_rewards[i].item() > 0 else 0.0)
+                        # episodic_lengths.append(local_infos["step_count_tmp"][i])
+                        episodic_returns.put(1.0 if local_rewards[i].item() > 0 else 0.0)
+                        episodic_lengths.put(local_infos["step_count_tmp"][i])
 
                 local_token_obs["input_ids"] = local_token_obs["input_ids"].to(dtype=torch.long)
                 queries_next = local_token_obs["input_ids"]
@@ -1530,11 +1515,11 @@ class PolicyTrainerRayProcess(RayProcess):
                 local_metrics["objective/scores_std"] = scores.std() if scores.shape[0] > 1 else torch.tensor(0, device=device)
                 local_metrics["objective/advantage_avg"] = advantages.mean()
                 local_metrics["objective/advantage_std"] = advantages.std() if advantages.shape[0] > 1 else torch.tensor(0, device=device)
-                # local_metrics["policy/approxkl_avg"] = approxkl_stats.mean()
-                # local_metrics["policy/clipfrac_avg"] = pg_clipfrac_stats.mean()
+                local_metrics["policy/approxkl_avg"] = approxkl_stats.mean()
+                local_metrics["policy/clipfrac_avg"] = pg_clipfrac_stats.mean()
                 local_metrics["policy/policy_grad_norm"] = pg_grad_norm_stats.mean()
-                # local_metrics["policy/ratio_avg"] = ratio_stats.mean()
-                # local_metrics["policy/ratio_std"] = ratio_stats.std() if ratio_stats.shape[0] > 1 else torch.tensor(0, device=device)
+                local_metrics["policy/ratio_avg"] = ratio_stats.mean()
+                local_metrics["policy/ratio_std"] = ratio_stats.std() if ratio_stats.shape[0] > 1 else torch.tensor(0, device=device)
                 local_metrics["loss/policy_avg"] = pg_loss_stats.mean()
                 if args.use_value_model:
                     local_metrics["loss/value_avg"] = vf_loss_stats.mean()
@@ -1552,10 +1537,18 @@ class PolicyTrainerRayProcess(RayProcess):
             metric_values /= dist.get_world_size()
             dist.all_reduce(metric_values, op=dist.ReduceOp.SUM)
             global_metrics = {k: v.item() for k, v in zip(metric_keys, metric_values)}
+            
+            episodic_returns_list = []
+            episodic_lengths_list = []
+            while not episodic_returns.empty():
+                episodic_returns_list.append(episodic_returns.get())
+            while not episodic_lengths.empty():
+                episodic_lengths_list.append(episodic_lengths.get())
+                
             global_metrics.update(
                 {
-                    "objective/episodic_return": sum(episodic_returns)/len(episodic_returns) if len(episodic_returns) > 0 else 0,
-                    "objective/episodic_length": sum(episodic_lengths)/len(episodic_lengths) if len(episodic_lengths) > 0 else 0,
+                    "objective/episodic_return": sum(episodic_returns_list)/len(episodic_returns_list) if len(episodic_returns_list) > 0 else 0,
+                    "objective/episodic_length": sum(episodic_lengths_list)/len(episodic_lengths_list) if len(episodic_lengths_list) > 0 else 0,
                 }
             )
             # Update metrics dictionary
@@ -1610,7 +1603,10 @@ class PolicyTrainerRayProcess(RayProcess):
             hf_path = os.path.join(output_dir, 'huggingface')
             os.makedirs(hf_path, exist_ok=True)
             if hasattr(model_to_save, "config"):
-                model_to_save._fsdp_wrapped_module.config.save_pretrained(hf_path)
+                if hasattr(model_to_save, '_fsdp_wrapped_module'):
+                    model_to_save._fsdp_wrapped_module.config.save_pretrained(hf_path)
+                else:
+                    model_to_save.config.save_pretrained(hf_path)
 
             # Save the processor
             processor.save_pretrained(output_dir)
