@@ -383,7 +383,7 @@ class Args:
 
     # FSDP-Specific Parameters
     sharding_strategy: str = "full-shard"
-    """The sharding strategy to use"""
+    """The sharding strategy to use. 'full-shard' (ZeRO-3 like), 'shard-grad-op' (ZeRO-2 like), 'hybrid-shard'"""
     offload: bool = False
     """Whether to offload the model to CPU to save GPU memory"""
 
@@ -522,13 +522,31 @@ class RayProcess:
     def get_master_addr_port(self):
         return self._master_addr, self._master_port
 
-def get_sharding_strategy(device_mesh):
-    if device_mesh.ndim == 1:
-        sharding_strategy = ShardingStrategy.FULL_SHARD
-    elif device_mesh.ndim == 2:
+def create_device_mesh(world_size, fsdp_size):
+    if fsdp_size < 0 or fsdp_size > world_size:
+        device_mesh = init_device_mesh("cuda", mesh_shape=(world_size,), mesh_dim_names=["fsdp"])
+    else:
+        device_mesh = init_device_mesh(
+            "cuda", mesh_shape=(world_size // fsdp_size, fsdp_size), mesh_dim_names=["ddp", "fsdp"]
+        )
+    return device_mesh
+
+def get_sharding_strategy(device_mesh, strategy_name="full-shard"):
+    if strategy_name == "shard-grad-op":
+        # ZeRO-2 like: Only shard gradients and optimizer states, keep parameters replicated
+        sharding_strategy = ShardingStrategy._HYBRID_SHARD_ZERO2
+    elif strategy_name == "full-shard":
+        if device_mesh.ndim == 1:
+            sharding_strategy = ShardingStrategy.FULL_SHARD
+        elif device_mesh.ndim == 2:
+            sharding_strategy = ShardingStrategy.HYBRID_SHARD
+        else:
+            raise NotImplementedError(f"Get device mesh ndim={device_mesh.ndim}, but only support 1 or 2")
+    elif strategy_name == "hybrid-shard":
         sharding_strategy = ShardingStrategy.HYBRID_SHARD
     else:
-        raise NotImplementedError(f"Get device mesh ndim={device_mesh.ndim}, but only support 1 or 2")
+        raise ValueError(f"Unsupported sharding strategy: {strategy_name}")
+    
     return sharding_strategy
 
 @ray.remote(num_gpus=1)
@@ -560,7 +578,12 @@ class PolicyTrainerRayProcess(RayProcess):
         # build device mesh for FSDP
         world_size = torch.distributed.get_world_size()
         logger.info(f"[Actor] World size: {world_size}")
-        self.device_mesh = init_device_mesh('cuda', mesh_shape=(world_size,), mesh_dim_names=['fsdp'])
+        # self.device_mesh = init_device_mesh('cuda', mesh_shape=(world_size,), mesh_dim_names=['fsdp'])
+        if args.sharding_strategy == "full-shard":
+            fsdp_size = -1
+        else:
+            fsdp_size = world_size
+        self.device_mesh = create_device_mesh(world_size=world_size, fsdp_size=fsdp_size)
 
         self._local_rank = int(os.environ["LOCAL_RANK"])
         # logger.info(f"[Actor] Local rank: {self._local_rank}")
@@ -620,7 +643,7 @@ class PolicyTrainerRayProcess(RayProcess):
         if args.enable_gradient_checkpointing:
             model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
 
-        fsdp_sharding_strategy = get_sharding_strategy(self.device_mesh)
+        fsdp_sharding_strategy = get_sharding_strategy(self.device_mesh, args.sharding_strategy)
         log_gpu_memory_usage("[Actor] Before FSDP wrapping", rank=self._rank, logger=logger, level=logging.INFO)
         auto_wrap_policy = get_fsdp_wrap_policy_openvla(model, is_lora=args.use_lora)
         # auto_wrap_policy = get_fsdp_wrap_policy(model, is_lora=args.use_lora) # ~40GB memory
@@ -628,9 +651,9 @@ class PolicyTrainerRayProcess(RayProcess):
         # cpu_offload = CPUOffload(offload_params=True) if args.offload else None
         cpu_offload = None  # NOTE:  We force turn off CPUOffload for critic because it causes incorrect results when using grad accumulation
 
-        fsdp_precision_policy = MixedPrecision(
-            param_dtype=torch.bfloat16, reduce_dtype=torch.float32, buffer_dtype=torch.float32
-        )
+        # fsdp_precision_policy = MixedPrecision(
+        #     param_dtype=torch.bfloat16, reduce_dtype=torch.float32, buffer_dtype=torch.float32
+        # )
         # self.model = FSDP(
         #     model,
         #     cpu_offload=cpu_offload,
@@ -869,8 +892,7 @@ class PolicyTrainerRayProcess(RayProcess):
                             param_names.append(processed_name)
                     num_params = len(param_names)
             else:
-                num_params = list(model.named_parameters())
-
+                num_params = len(list(model.named_parameters()))
             logger.info(f"🔥🔥🔥 Broadcasting {num_params} parameters")
             
             with FSDP.summon_full_params(model, writeback=False):   # this takes up a lot of memory
