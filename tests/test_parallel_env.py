@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test script for VLAEnv initialization without model setup.
-This script mimics the structure of ppo_vllm_thread_ray_fsdp_vla_v3.py
+This script mimics the structure of ppo_vllm_ray_fsdp_v3.py
 but focuses only on testing the environment initialization.
 """
 
@@ -297,7 +297,7 @@ def kill_ray_cluster_if_a_worker_dies(object_refs: List[Any], stop_event: thread
 
 @draccus.wrap()
 def main(args: TestArgs):
-    """Main test function that mirrors the structure of ppo_vllm_thread_ray_fsdp_vla_v3.py but only tests VLAEnv"""
+    """Main test function that mirrors the structure of ppo_vllm_ray_fsdp_v3.py but only tests VLAEnv"""
     cprint(f"Starting VLAEnv initialization test for `{args.task_suite_name}`", "blue")
     calculate_test_runtime_args(args)
 

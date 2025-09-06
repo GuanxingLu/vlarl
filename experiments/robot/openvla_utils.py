@@ -28,15 +28,15 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 )
 
 # Flag to track if custom classes are registered
-_CUSTOM_CLASSES_REGISTERED = False
+# _CUSTOM_CLASSES_REGISTERED = False
 def register_custom_classes():
-    global _CUSTOM_CLASSES_REGISTERED
-    if not _CUSTOM_CLASSES_REGISTERED:
-        AutoConfig.register("openvla", OpenVLAConfig)
-        AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-        AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-        AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
-        _CUSTOM_CLASSES_REGISTERED = True
+    # global _CUSTOM_CLASSES_REGISTERED
+    # if not _CUSTOM_CLASSES_REGISTERED:
+    AutoConfig.register("openvla", OpenVLAConfig)
+    AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
+    AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
+    AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+        # _CUSTOM_CLASSES_REGISTERED = True
 
 def get_vla(cfg, device=DEVICE):
     """Loads and returns a VLA model from checkpoint."""

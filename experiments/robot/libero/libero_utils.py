@@ -67,6 +67,20 @@ def save_rollout_video(rollout_images, idx, success, task_description, log_file=
         os.makedirs(rollout_dir, exist_ok=True)
         mp4_path = f"{rollout_dir}/{DATE_TIME}--episode={idx}--success={success}--task={processed_task_description}.mp4"
 
+    # Resize images to ensure dimensions are divisible by 16 for video codec compatibility
+    if rollout_images:
+        first_img = rollout_images[0]
+        h, w = first_img.shape[:2]
+        new_h = ((h + 15) // 16) * 16
+        new_w = ((w + 15) // 16) * 16
+        if new_h != h or new_w != w:
+            resized_images = []
+            for img in rollout_images:
+                # print(f"{img.shape=}")    # (224, 504, 3)
+                resized_img = resize_image(img, (new_h, new_w))
+                resized_images.append(resized_img)
+            rollout_images = resized_images
+
     video_writer = imageio.get_writer(mp4_path, fps=30)
     for img in rollout_images:
         video_writer.append_data(img)

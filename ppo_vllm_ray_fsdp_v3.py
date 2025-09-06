@@ -123,6 +123,7 @@ from experiments.robot.robot_utils import (
 # import debugpy
 # debugpy.listen(("localhost", 5678))
 logger = init_logger(__name__)
+logging.getLogger("imageio_ffmpeg").setLevel(logging.ERROR)
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -188,11 +189,11 @@ class Args:
     """Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90"""
     num_steps_wait: int = 10
     """Number of steps to wait for objects to stabilize in sim"""
-    num_tasks_per_suite: int = 10
+    num_tasks_per_suite: Optional[int] = None
     """Number of tasks per suite"""
     num_trials_per_task: int = 50
     """Number of rollouts per task"""
-    n_rollout_threads: int = 10
+    n_rollout_threads: Optional[int] = None
     """Number of parallel vec environments"""
     task_ids: Optional[List[int]] = None
     """Task ids to run"""
@@ -282,8 +283,8 @@ class Args:
     """The number of gradient accumulation steps"""
     per_device_train_batch_size: Optional[int] = 2
     """The forward batch size per device (local_micro_batch_size)"""
-    # per_device_eval_batch_size: Optional[int] = 1
-    # """The forward batch size per device for evaluation (local_micro_batch_size)"""
+    per_device_eval_batch_size: Optional[int] = 1
+    """The forward batch size per device for evaluation (local_micro_batch_size)"""
     total_episodes: Optional[int] = 100000
     """The total number of training episodes"""
     world_size: Optional[int] = None
@@ -296,12 +297,8 @@ class Args:
     """The number of rollout episodes per iteration"""
     num_training_steps: Optional[int] = None
     """The number of training_steps to train"""
-    # num_evals: int = 4
-    # """The number of evaluations to run throughout training"""
-    # eval_freq: Optional[int] = None
-    # """The frequency of evaluation steps"""
-    # local_dataloader_batch_size: Optional[int] = None
-    # """The batch size per GPU for the dataloader"""
+    eval_freq: Optional[int] = 10
+    """The frequency of evaluation steps"""
     save_freq: int = -1
     """How many train steps to save the model"""
     num_epochs: int = 1
@@ -556,11 +553,7 @@ class PolicyTrainerRayProcess(RayProcess):
         # Update logger with rank information
         global logger
         logger = init_logger(__name__, self._rank)
-        # Register OpenVLA model to HF Auto Classes
-        # AutoConfig.register("openvla", OpenVLAConfig)
-        # AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-        # AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-        # AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+
         register_custom_classes()
         
         if getattr(args, "vllm_num_engines", 0) > 0:
@@ -798,11 +791,142 @@ class PolicyTrainerRayProcess(RayProcess):
             raise NotImplementedError(f"Unsupported vision backbone: {backbone_id}; only dinosiglip is supported.")
         return num_image_tokens
 
+    def evaluate(
+        self,
+        eval_envs: VLAEnv,
+        processor: ProcessorMixin,
+        param_prompt_Q: Queue,
+        response_ids_Q: Queue,
+        device: torch.device,
+    ) -> Dict[str, float]:
+        logger.info(f"[Eval] Starting parallel evaluation")
+
+        args = self.args
+
+        self.model.eval()
+        if args.use_value_model:
+            self.value_model.eval()
+
+        timer = TimingManager()
+        completed_episodes = 0
+        total_successes = 0
+        episode_lengths = []
+        episode_returns = []
+        
+        # Calculate total expected episodes
+        total_expected_episodes = args.num_trials_per_task * args.num_tasks_per_suite
+        
+        # Initialize progress bar
+        pbar = tqdm.tqdm(
+            total=total_expected_episodes,
+            desc="[Eval] Episodes",
+            dynamic_ncols=True,
+            disable=(self._rank != 0)
+            # position=0,
+            # leave=True,
+        )
+        obs, infos = eval_envs.reset()
+
+        while True:
+            with timer.timer("model_inference"):
+                padding_side = "right"
+                num_channels = 3
+                if args.model_family == "openvla":
+                    num_channels = num_channels * 2  # stack for dinosiglip
+                image_height, image_width = self.hf_config.image_sizes
+                
+                local_token_obs = {
+                    "input_ids": torch.ones(len(obs["prompts"]), args.context_length - 1, device=device, dtype=torch.float32) * args.pad_token_id,
+                    "pixel_values": torch.zeros(len(obs["prompts"]), num_channels, image_height, image_width, device=device, dtype=torch.float32),
+                }
+                processed_obs = process_with_padding_side(
+                    processor, 
+                    obs["prompts"], 
+                    obs["pixel_values"], 
+                    padding=True, 
+                    padding_side=padding_side
+                ).to(device, dtype=torch.float32)
+
+                local_token_obs["input_ids"][:, :processed_obs["input_ids"].shape[1]] = processed_obs["input_ids"]
+                local_token_obs["input_ids"] = add_special_token(local_token_obs["input_ids"], pad_token_id=args.pad_token_id)
+                local_token_obs["pixel_values"][:] = processed_obs["pixel_values"]
+                del processed_obs
+                
+                local_token_obs["input_ids"] = local_token_obs["input_ids"].to(dtype=torch.long)
+                pixel_array = np.stack([np.array(img) for img in obs["pixel_values"]])
+                eval_token_obs = {
+                    "input_ids": local_token_obs["input_ids"].cpu().numpy(),
+                    "pixel_values": pixel_array,
+                }
+                param_prompt_Q.put(eval_token_obs)
+                response_data = response_ids_Q.get()
+                actions, response_ids, response_logprobs = response_data
+
+            with timer.timer("env_step"):
+                next_obs, rewards, dones, infos = eval_envs.step(actions)
+
+            if np.any(dones):
+                new_episodes = np.sum(dones)
+                new_successes = sum([r > 0 for r, d in zip(rewards, dones) if d])
+                completed_episodes += new_episodes
+                total_successes += new_successes
+                for i, (r, d) in enumerate(zip(rewards, dones)):
+                    if d:
+                        episode_returns.append(r)
+                        episode_length = eval_envs.step_count[i]
+                        episode_lengths.append(episode_length)
+
+                current_success_rate = total_successes / completed_episodes if completed_episodes > 0 else 0.0
+                pbar.update(new_episodes)
+                pbar.set_postfix({
+                    'Success Rate': f'{current_success_rate:.3f}',
+                    'Successes': f'{total_successes}/{completed_episodes}'
+                })
+                if self._rank == 0:  # Only log on rank 0
+                    cprint(f"[Eval] Completed {completed_episodes}/{total_expected_episodes} episodes, "
+                              f"Success rate: {current_success_rate:.3f} ({total_successes}/{completed_episodes})",
+                              "cyan")
+            
+            # Break if all episodes in batch are done
+            # if np.allclose(eval_envs.initial_state_ids, -1):
+            if completed_episodes >= total_expected_episodes:
+                break
+            obs = next_obs
+
+        pbar.close()
+        
+        # Calculate final statistics
+        final_success_rate = total_successes / completed_episodes if completed_episodes > 0 else 0.0
+        avg_episode_length = np.mean(episode_lengths) if episode_lengths else 0.0
+        avg_episode_return = np.mean(episode_returns) if episode_returns else 0.0
+        
+        eval_stats = {
+            'success_rate': final_success_rate,
+            'num_episodes': completed_episodes,
+            'total_successes': total_successes,
+            'episode_length': avg_episode_length,
+            'episode_return': avg_episode_return,
+        }
+        eval_stats.update(timer.get_log())
+        
+        logger.info(f"[Eval] Completed parallel evaluation: "
+                    f"Episodes: {completed_episodes}, Successes: {total_successes}, "
+                    f"Success rate: {final_success_rate:.3f}, "
+                    f"Avg episode length: {avg_episode_length:.1f}")
+        timer.close()
+
+        self.model.train()
+        if args.use_value_model:
+            self.value_model.train()
+        
+        return eval_stats
+
     def train(
         self,
         processor: ProcessorMixin,
         vllm_engines: List[ray.actor.ActorHandle],
         metrics_queue: Queue,
+        eval_envs: Optional[VLAEnv] = None,
     ):
         """Main training loop for PPO"""
         logger.info("Starting training loop")
@@ -820,7 +944,7 @@ class PolicyTrainerRayProcess(RayProcess):
         args.env_gpu_id = 0
         logger.info(f"Current Device ID: {self._rank}; Task IDs: {args.task_ids}")
         train_envs = VLAEnv(cfg=args, mode="train")
-        # train_envs = VLAEnv(cfg=args, mode="eval")
+        eval_envs = VLAEnv(cfg=args, mode="eval")
         action_dim = train_envs.action_space[0]
 
         padding_side = "right"  # Ref: https://github.com/openvla/openvla/issues/189
@@ -829,6 +953,7 @@ class PolicyTrainerRayProcess(RayProcess):
         accelerator.process_index = self._rank
         accelerator.num_processes = self._world_size
         accelerator.is_main_process = self._rank == 0
+        
         dist.barrier()
         if accelerator.is_main_process:
             master_address = ray._private.services.get_node_ip_address()
@@ -1158,16 +1283,40 @@ class PolicyTrainerRayProcess(RayProcess):
         g_response_logprobs = None
         log_gpu_memory_usage("[Rollout] Storage setup, before rollout", rank=accelerator.process_index, logger=logger, level=logging.INFO)
 
-        # self.save_model(self.model, processor, args.exp_dir)
+        # self.save_model(self.model, processor, args.exp_dir)、
 
         resume_training_step = 1
         global_step = 0
-        episodic_returns = Queue(maxsize=args.local_rollout_batch_size)
-        episodic_lengths = Queue(maxsize=args.local_rollout_batch_size)
+        # episodic_returns = Queue(maxsize=args.local_rollout_batch_size)
+        # episodic_lengths = Queue(maxsize=args.local_rollout_batch_size)
+
+        # initial eval
+        # logger.info(f"[Eval] Running evaluation at training step 0")
+        # with timer.timer("evaluation"):
+        #     eval_metrics = self.evaluate(
+        #         eval_envs=eval_envs,
+        #         processor=processor,
+        #         # vllm_engines=vllm_engines,
+        #         param_prompt_Q=param_prompt_Q,
+        #         response_ids_Q=response_ids_Q,
+        #         # generation_config=generation_config,
+        #         device=device,
+        #     )
+        # eval_metrics_with_meta = {
+        #     "eval/success_rate": eval_metrics['success_rate'],
+        #     "eval/episode_length": eval_metrics['episode_length'], 
+        #     "eval/episode_return": eval_metrics['episode_return'],
+        #     "episode": episode,
+        #     "training_step": 0,
+        #     **timer.get_log(),
+        # }
+        # metrics_queue.put((eval_metrics_with_meta, global_step))
+        # logger.info(f"[Eval] Evaluation completed at training step 0")
+
         # Begin training loop
         for training_step in range(resume_training_step, args.num_training_steps):
-            # episodic_returns = []
-            # episodic_lengths = []
+            episodic_returns = []
+            episodic_lengths = []
             episode += args.rollout_batch_size  # rollout batch size is the number of parallel environments
 
             if training_step != 1:
@@ -1321,10 +1470,10 @@ class PolicyTrainerRayProcess(RayProcess):
                 # compute episodic reward
                 for i in range(args.local_rollout_batch_size):
                     if local_dones[i]:
-                        # episodic_returns.append(1.0 if local_rewards[i].item() > 0 else 0.0)
-                        # episodic_lengths.append(local_infos["step_count_tmp"][i])
-                        episodic_returns.put(1.0 if local_rewards[i].item() > 0 else 0.0)
-                        episodic_lengths.put(local_infos["step_count_tmp"][i])
+                        episodic_returns.append(1.0 if local_rewards[i].item() > 0 else 0.0)
+                        episodic_lengths.append(local_infos["step_count_tmp"][i])
+                        # episodic_returns.put(1.0 if local_rewards[i].item() > 0 else 0.0)
+                        # episodic_lengths.put(local_infos["step_count_tmp"][i])
 
                 local_token_obs["input_ids"] = local_token_obs["input_ids"].to(dtype=torch.long)
                 queries_next = local_token_obs["input_ids"]
@@ -1559,18 +1708,11 @@ class PolicyTrainerRayProcess(RayProcess):
             metric_values /= dist.get_world_size()
             dist.all_reduce(metric_values, op=dist.ReduceOp.SUM)
             global_metrics = {k: v.item() for k, v in zip(metric_keys, metric_values)}
-            
-            episodic_returns_list = []
-            episodic_lengths_list = []
-            while not episodic_returns.empty():
-                episodic_returns_list.append(episodic_returns.get())
-            while not episodic_lengths.empty():
-                episodic_lengths_list.append(episodic_lengths.get())
                 
             global_metrics.update(
                 {
-                    "objective/episodic_return": sum(episodic_returns_list)/len(episodic_returns_list) if len(episodic_returns_list) > 0 else 0,
-                    "objective/episodic_length": sum(episodic_lengths_list)/len(episodic_lengths_list) if len(episodic_lengths_list) > 0 else 0,
+                    "objective/episodic_return": sum(episodic_returns)/len(episodic_returns) if len(episodic_returns) > 0 else 0,
+                    "objective/episodic_length": sum(episodic_lengths)/len(episodic_lengths) if len(episodic_lengths) > 0 else 0,
                 }
             )
             # Update metrics dictionary
@@ -1589,6 +1731,29 @@ class PolicyTrainerRayProcess(RayProcess):
             gc.collect()
             torch.cuda.empty_cache()
             log_gpu_memory_usage("[Training] After training", rank=accelerator.process_index, logger=logger, level=logging.INFO)
+
+            if (args.eval_freq > 0 and training_step % args.eval_freq == 0):
+                logger.info(f"[Eval] Running evaluation at training step {training_step}")
+                with timer.timer("evaluation"):
+                    eval_metrics = self.evaluate(
+                        eval_envs=eval_envs,
+                        processor=processor,
+                        # vllm_engines=vllm_engines,
+                        param_prompt_Q=param_prompt_Q,
+                        response_ids_Q=response_ids_Q,
+                        # generation_config=generation_config,
+                        device=device,
+                    )
+                eval_metrics_with_meta = {
+                    "eval/success_rate": eval_metrics['success_rate'],
+                    "eval/episode_length": eval_metrics['episode_length'], 
+                    "eval/episode_return": eval_metrics['episode_return'],
+                    "episode": episode,
+                    "training_step": training_step,
+                    **timer.get_log(),
+                }
+                metrics_queue.put((eval_metrics_with_meta, global_step))
+                logger.info(f"[Eval] Evaluation completed at training step {training_step}")
 
             # save steps
             if args.save_freq > 0 and training_step % args.save_freq == 0:
@@ -1777,6 +1942,7 @@ def main(args: Args):
         tensor_parallel_size=args.vllm_tensor_parallel_size,
         enforce_eager=args.vllm_enforce_eager,
         pretrain=args.pretrained_checkpoint,
+        trust_remote_code=True, # TODO: support False here (modify vllm)
         revision=None,
         seed=args.seed,
         enable_prefix_caching=args.enable_prefix_caching,
@@ -1826,6 +1992,7 @@ def main(args: Args):
     # train and gather metrics
     resume_training_step = 1
     for training_step in range(resume_training_step, args.num_training_steps):
+    # while True:
         result = metrics_queue.get()
         metrics, global_step = result
         for key, value in metrics.items():

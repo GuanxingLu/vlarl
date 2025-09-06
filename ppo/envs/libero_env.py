@@ -198,7 +198,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
         history = self.success_tracker[task_id][state_id]
         history.append(1.0 if success else 0.0)
 
-        cprint(f"[DEBUG] history: {history}", "yellow")
+        # cprint(f"[DEBUG] history: {history}", "yellow")
 
     def _sample_task_state_curriculum(self, task_idx):
         """
@@ -490,7 +490,7 @@ class VLAEnv(BaseEnv[EnvOutput, np.ndarray]):
                 # Log results
                 status = "successfully" if success else "failed to"
                 color = "green" if success else "red"
-                cprint(f"[INFO] Task {task_id} variant {self.initial_state_ids[task_id]} {status} complete in {self.step_count[task_id]} steps.", color)
+                # cprint(f"[INFO] Task {task_id} variant {self.initial_state_ids[task_id]} {status} complete in {self.step_count[task_id]} steps.", color)
 
                 # Save video for done environments if enabled
                 if self.save_video:

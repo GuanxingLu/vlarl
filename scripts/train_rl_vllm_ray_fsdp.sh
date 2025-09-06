@@ -18,11 +18,11 @@
 # export NCCL_P2P_DISABLE=1
 # export NCCL_BUFFSIZE=67108864   # 64MiB, default is 4MiB
 # export RAY_DEDUP_LOGS=0 # log all ray instances
+# export VLLM_LOGGING_LEVEL=DEBUG
 
 export MESA_GL_VERSION_OVERRIDE=4.1
 export PYOPENGL_PLATFORM=egl
 export MUJOCO_GL=egl
-
 # export MUJOCO_GL=glx
 # export MUJOCO_GL=glfw
 # export MUJOCO_GL=osmesa
@@ -30,18 +30,18 @@ export MUJOCO_GL=egl
 # data
 # POSTFIX=spatial
 # POSTFIX=goal
-POSTFIX=object
-# POSTFIX=10
+# POSTFIX=object
+POSTFIX=10
 DATA_NAME=libero_${POSTFIX}
 DATA_ROOT=${DATA_NAME}_no_noops
 
 # Total H20 GPUs (lora)
-# per_device_train_batch_size=16
-# local_rollout_batch_size=10
+per_device_train_batch_size=16
+local_rollout_batch_size=10
 
 # Total H20 GPUs (full)
-per_device_train_batch_size=4
-local_rollout_batch_size=10
+# per_device_train_batch_size=4
+# local_rollout_batch_size=10
 
 # Total 2 A100 GPUs
 # per_device_train_batch_size=16
@@ -72,14 +72,14 @@ echo "local_rollout_batch_size=${local_rollout_batch_size}"
 # --pretrained_checkpoint "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
 # --pretrained_checkpoint "MODEL/openvla-7b" \
 
-# /opt/conda/envs/vlarl/bin/python
-CUDA_VISIBLE_DEVICES=$GPUS python \
-    ppo_vllm_thread_ray_fsdp_vla_v3.py \
+# CUDA_VISIBLE_DEVICES=$GPUS python \
+CUDA_VISIBLE_DEVICES=$GPUS /opt/conda/envs/vlarl/bin/python \
+    ppo_vllm_ray_fsdp_v3.py \
     --pretrained_checkpoint "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
     --data_root_dir ./data/modified_libero_rlds \
     --dataset_name ${DATA_ROOT} \
     --task_suite_name ${DATA_NAME} \
-    --num_trials_per_task 1 \
+    --num_trials_per_task 50 \
     --run_root_dir "checkpoints/${DATA_ROOT}/root" \
     --adapter_tmp_dir "checkpoints/${DATA_ROOT}/adapter" \
     --per_device_train_batch_size ${per_device_train_batch_size} \
@@ -87,26 +87,26 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --local_rollout_batch_size ${local_rollout_batch_size} \
     --local_rollout_forward_batch_size ${local_rollout_batch_size} \
     --actor_num_gpus_per_node "[${ACTOR_GPUS}]" \
-    --temperature 1.0 \
+    --temperature 1.6 \
     --num_epochs 1 \
-    --value_init_steps 3 \
-    --learning_rate 3e-6 \
-    --value_learning_rate 3e-6 \
+    --value_init_steps 2 \
+    --learning_rate 5e-6 \
+    --value_learning_rate 5e-5 \
     --policy_max_grad_norm 1.0 \
     --value_max_grad_norm 1.0 \
     --cliprange_high 0.4 \
     --cliprange_low 0.2 \
     --gamma 1.0 \
-    --num_steps 256 \
+    --num_steps 512 \
     --max_env_length 512 \
     --total_episodes 100000 \
     --vllm_tensor_parallel_size 1 \
     --vllm_enforce_eager True \
     --enable_prefix_caching False \
     --gpu_memory_utilization 0.9 \
-    --use_lora False \
+    --use_lora True \
     --enable_gradient_checkpointing False \
-    --sharding_strategy "full-shard" \
+    --sharding_strategy "shard-grad-op" \
     --offload False \
     --use_value_model True \
     --value_model_type "vla" \
@@ -118,6 +118,7 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --success_history_window 20 \
     --curriculum_recompute_freq 10 \
     --save_freq 20 \
+    --eval_freq 20 \
     --save_video True \
     --use_wandb False \
     --wandb_offline False \

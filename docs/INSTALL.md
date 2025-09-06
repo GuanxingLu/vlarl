@@ -20,25 +20,24 @@ pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https
 # Clone the repo and install it
 git clone https://github.com/GuanxingLu/vlarl.git
 cd vlarl
-# pip install -e .
-uv sync
+pip install -e .
 # for LIBERO simulation
-uv pip install -r experiments/robot/libero/libero_requirements.txt
+pip install -r experiments/robot/libero/libero_requirements.txt
 
 # [vLLM]
-cd prismatic/extern/vllm; uv pip install -e .; cd ../../..
+cd prismatic/extern/vllm; pip install -e .; cd ../../..
 
 # Install Flash Attention 2 for training (https://github.com/Dao-AILab/flash-attention)
 #   =>> If you run into difficulty, try `pip cache remove flash_attn` first
-uv pip install packaging ninja
+pip install packaging ninja
 ninja --version; echo $?  # Verify Ninja --> should return exit code "0"
-uv pip install "flash-attn==2.5.5" --no-build-isolation
+pip install "flash-attn==2.5.5" --no-build-isolation
 # NOTE: if the building process is slow, please check https://github.com/mjun0812/flash-attention-prebuild-wheels for prebuilt wheels.
 
 # [Libero]
 git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
 cd LIBERO
-uv pip install -e .
+pip install -e .
 
 # Download SFT checkpoints
 mkdir -p MODEL/; cd MODEL/

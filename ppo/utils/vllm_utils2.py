@@ -270,6 +270,7 @@ def create_vllm_engines(
     tensor_parallel_size: int,
     enforce_eager: bool,
     pretrain: str,  # i.e., model name or path
+    trust_remote_code: bool,
     revision: str,
     seed: int,
     enable_prefix_caching: bool,
@@ -305,8 +306,7 @@ def create_vllm_engines(
             ).remote(
                 pretrain,
                 worker_cls="ppo.utils.vllm_utils2.WorkerWrap",
-                trust_remote_code=True,
-                # trust_remote_code=False,
+                trust_remote_code=trust_remote_code,
                 tensor_parallel_size=tensor_parallel_size,
                 enforce_eager=enforce_eager,
                 dtype="bfloat16",
