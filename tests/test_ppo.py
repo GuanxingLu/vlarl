@@ -24,8 +24,8 @@ def test_ppo_multi_gpu():
     num_gpus = len(devices.split(","))
     actor_gpus = num_gpus - 1
     cmd = [
-        f"/opt/conda/envs/vlarl/bin/python",
-        "ppo_vllm_ray_fsdp_v3.py",
+        f"python",
+        "ppo_vllm_ray_fsdp.py",
         "--pretrained_checkpoint", "MODEL/openvla-7b-finetuned-libero-goal",
         "--data_root_dir", "./data/modified_libero_rlds",
         "--dataset_name", "libero_goal_no_noops",

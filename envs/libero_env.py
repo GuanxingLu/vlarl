@@ -34,11 +34,16 @@ class LiberoVecEnv(gym.Env):
         resize_size: Optional[Tuple[int, int]] = None,
         penalty_value: Optional[float] = 0.0,
         state_sampler: Optional[callable] = None,
+        auto_reset: bool = True,
+        group_size: Optional[int] = None,
+        num_group: Optional[int] = None,
     ):
         super().__init__()
         self.task_suite_name = task_suite_name
         self.task_ids = task_ids
-        self.num_envs = num_envs or len(task_ids)
+        self.group_size = group_size
+        self.num_group = num_group
+        self.num_envs = num_group * group_size
         self.is_vector_env = True
         self.model_family = model_family
         self.center_crop = center_crop
@@ -49,9 +54,9 @@ class LiberoVecEnv(gym.Env):
         self.rand_init_state = rand_init_state
         self.num_steps_wait = num_steps_wait
         self.penalty_value = penalty_value
-        
-        if len(task_ids) < self.num_envs:
-            raise ValueError(f"Not enough task_ids ({len(task_ids)}) for n_envs ({self.num_envs})")
+        self.auto_reset = auto_reset
+        self._done_mask = np.zeros(self.num_envs, dtype=bool)
+        self._last_obs_list = None
         
         self.benchmark_dict = benchmark.get_benchmark_dict()
         self.task_suite = self.benchmark_dict[self.task_suite_name]()
@@ -72,18 +77,21 @@ class LiberoVecEnv(gym.Env):
             "prompts": gym.spaces.Text(max_length=1000)
         })
         
+        cuda_visible_devices = os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        gpus = [int(x) for x in cuda_visible_devices.split(",")] if cuda_visible_devices else [0]
+
         env_creators = []
         for i in range(self.num_envs):
             task_id = task_ids[i % len(task_ids)]
             task = self.task_suite.get_task(task_id)
             self.tasks.append(task)
             self.task_descriptions.append(task.language)
-            
+
             task_initial_states = self.task_suite.get_task_init_states(task_id)
             if len(task_initial_states) > self.num_trials_per_task:
                 task_initial_states = task_initial_states[:self.num_trials_per_task]
             self.initial_states_list.append(task_initial_states)
-            
+
             bddl_file = os.path.join(
                 get_libero_path("bddl_files"),
                 task.problem_folder,
@@ -93,14 +101,22 @@ class LiberoVecEnv(gym.Env):
                 "bddl_file_name": bddl_file,
                 "camera_heights": resolution,
                 "camera_widths": resolution,
-                # "render_gpu_device_id": -1,
-                # "seed": self.seed_ + i,
+                "render_gpu_device_id": gpus[i % len(gpus)],
+                "seed": int(seed),
             }
-            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
-            env_creators.append(lambda args=env_args: OffScreenRenderEnv(**args))
-        
+
+            def env_fn(param=env_args):
+                seed = param.pop("seed")
+                env = OffScreenRenderEnv(**param)
+                env.seed(seed)
+                return env
+
+            env_creators.append(env_fn)
+
         self.envs = SubprocVectorEnv(env_creators)
-        self.envs.seed(self.seed_)
+        # self.envs.seed(int(self.seed_))
+        if cuda_visible_devices:
+            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
         self.step_counts = np.zeros(self.num_envs)
         self.current_state_indices = np.zeros(self.num_envs, dtype=int)
         self.task_state_results = {}  # {(task_id, state_id): [success_results]}
@@ -117,32 +133,52 @@ class LiberoVecEnv(gym.Env):
         }
         return task_max_steps.get(task_suite_name, 300)
         
-    def reset(self,):
-        # reset_start_time = time.time()
+    def reset(self, seed=None, options=None):
         self.step_counts = np.zeros(self.num_envs)
+        self._done_mask[:] = False
         self.task_state_results = {}
         self.current_task_state_pairs = []
-        
+
         init_states = []
-        for i in range(self.num_envs):
-            task_id = self.task_ids[i % len(self.task_ids)]
+
+        # Sample state_ids for each group, then repeat for group_size
+        group_state_ids = []
+        for group_idx in range(self.num_group):
+            # Get the environment index for this group (first env in the group)
+            env_idx = group_idx * self.group_size
+            task_id = self.task_ids[env_idx % len(self.task_ids)]
+
             if self.state_sampler is not None:
-                state_id = int(self.state_sampler(task_id=task_id, n_states=len(self.initial_states_list[i])))
+                state_id = int(self.state_sampler(task_id=task_id, n_states=len(self.initial_states_list[env_idx])))
             elif self.rand_init_state:
-                state_id = np.random.randint(0, len(self.initial_states_list[i]))
+                state_id = np.random.randint(0, len(self.initial_states_list[env_idx]))
             else:
-                state_id = 0
-                self.current_state_indices[i] += 1
+                state_id = self.current_state_indices[env_idx] % len(self.initial_states_list[env_idx])
+                self.current_state_indices[env_idx] += 1
+
+            group_state_ids.append(state_id)
+
+        # Now assign states to all environments based on their group
+        for i in range(self.num_envs):
+            group_idx = i // self.group_size
+            state_id = group_state_ids[group_idx]
+            task_id = self.task_ids[i % len(self.task_ids)]
+
             init_states.append(self.initial_states_list[i][state_id])
             self.current_task_state_pairs.append((task_id, state_id))
 
+        if seed is not None:
+            self.envs.seed([seed for i in range(self.num_envs)])
+        self.envs.reset()
         obs_list = self.envs.set_init_state(init_states)
         dummy_action = get_libero_dummy_action()
         dummy_actions = [dummy_action] * self.num_envs
-        
-        for _ in range(self.num_steps_wait): # Stablize the env
+
+        for _ in range(self.num_steps_wait):
             obs_list, _, _, _ = self.envs.step(dummy_actions)
-        
+
+        self._last_obs_list = obs_list
+
         pixel_values = []
         prompts = []
         for i, obs in enumerate(obs_list):
@@ -151,9 +187,9 @@ class LiberoVecEnv(gym.Env):
                 img = np.array(img)
             pixel_values.append(img)
             prompts.append(self.task_descriptions[i])
-        
+
         img_list, prompt_list = preprocess_input_batch(
-            pixel_values, prompts, 
+            pixel_values, prompts,
             pre_thought_list=None, center_crop=self.center_crop
         )
         env_output = EnvOutput(pixel_values=img_list, prompts=prompt_list)
@@ -162,7 +198,6 @@ class LiberoVecEnv(gym.Env):
             "step_counts": self.step_counts.copy(),
             "penalty_nums": np.array([0] * self.num_envs),
         }
-        # print(f"Env reset time: {time.time() - reset_start_time:.2f} seconds")
         return env_output, info
 
     def step(self, actions, **kwargs):
@@ -172,56 +207,130 @@ class LiberoVecEnv(gym.Env):
         actions = normalize_gripper_action(actions, binarize=True)
         if self.model_family == "openvla":
             actions = invert_gripper_action(actions)
-        
-        obs_list, rewards, dones, infos = self.envs.step(actions)
-        
-        # Apply penalty where the input action was the dummy action
-        for i, is_dummy in enumerate(is_dummy_mask):
-            if is_dummy:
-                rewards[i] += float(self.penalty_value)
-        
-        self.step_counts += 1
-        
-        for i in range(self.num_envs):
-            if self.step_counts[i] >= self.max_steps:
-                dones[i] = True
-        
+
+        if not self.auto_reset:
+            active_indices = np.where(~self._done_mask)[0].tolist()
+
+            if len(active_indices) == 0:    # All envs are done
+                obs_list = self._last_obs_list
+                rewards = np.zeros(self.num_envs, dtype=np.float32)
+                dones = np.ones(self.num_envs, dtype=bool)
+                is_dummy_mask = np.zeros(self.num_envs, dtype=bool)
+
+                pixel_values = []
+                prompts = []
+                for i, obs in enumerate(obs_list):
+                    img = get_libero_image(obs, self.resize_size)
+                    pixel_values.append(img)
+                    prompts.append(self.task_descriptions[i])
+                img_list, prompt_list = preprocess_input_batch(
+                    pixel_values, prompts,
+                    pre_thought_list=None, center_crop=True
+                )
+                env_output = EnvOutput(pixel_values=img_list, prompts=prompt_list)
+                info = {
+                    "task_descriptions": prompts,
+                    "step_counts": self.step_counts.copy(),
+                    "penalty_nums": is_dummy_mask,
+                }
+                truncated = np.array([False] * self.num_envs)
+                return env_output, rewards, dones, truncated, info
+
+            active_actions = [actions[i] for i in active_indices]
+            active_obs_list, active_rewards, active_dones, active_infos = self.envs.step(
+                active_actions, id=active_indices
+            )
+
+            obs_list = self._last_obs_list.copy() if self._last_obs_list is not None else [None] * self.num_envs
+            rewards = np.zeros(self.num_envs, dtype=np.float32)
+            dones = self._done_mask.copy()
+
+            for k, idx in enumerate(active_indices):
+                obs_list[idx] = active_obs_list[k]
+                rewards[idx] = active_rewards[k]
+                dones[idx] = active_dones[k]
+
+            for i in active_indices:
+                if is_dummy_mask[i]:
+                    rewards[i] += float(self.penalty_value)
+
+            self.step_counts[active_indices] += 1
+
+            for i in active_indices:
+                if self.step_counts[i] >= self.max_steps:
+                    dones[i] = True
+
+        else:
+            obs_list, rewards, dones, infos = self.envs.step(actions)
+
+            for i, is_dummy in enumerate(is_dummy_mask):
+                if is_dummy:
+                    rewards[i] += float(self.penalty_value)
+
+            self.step_counts += 1
+
+            for i in range(self.num_envs):
+                if self.step_counts[i] >= self.max_steps:
+                    dones[i] = True
+
         if np.any(dones):
             done_indices = np.where(dones)[0]
-            # Record success/fail results for completed episodes
             for i in done_indices:
                 task_id, state_id = self.current_task_state_pairs[i]
                 success = rewards[i] > 0
                 if (task_id, state_id) not in self.task_state_results:
                     self.task_state_results[(task_id, state_id)] = []
                 self.task_state_results[(task_id, state_id)].append(success)
-            
-            # Auto-reset environments that are done
-            new_initial_states = []
-            dummy_actions = []
-            for i in done_indices:
-                task_id = self.task_ids[i % len(self.task_ids)]
-                if self.state_sampler is not None:
-                    state_id = int(self.state_sampler(task_id=task_id, n_states=len(self.initial_states_list[i])))
-                    state_id = max(0, min(state_id, len(self.initial_states_list[i]) - 1))
-                elif self.rand_init_state:
-                    state_id = np.random.randint(0, len(self.initial_states_list[i]))
-                else:
-                    state_id = self.current_state_indices[i] % len(self.initial_states_list[i])
-                    self.current_state_indices[i] += 1
-                new_initial_states.append(self.initial_states_list[i][state_id])
-                self.current_task_state_pairs[i] = (task_id, state_id)
-                dummy_action = get_libero_dummy_action()
-                dummy_actions.append(dummy_action)
-            self.envs.reset(id=done_indices.tolist())
-            obs = self.envs.set_init_state(new_initial_states, id=done_indices.tolist())
 
-            for _ in range(self.num_steps_wait):  # Stabilize the env
-                obs, _, _, _ = self.envs.step(dummy_actions, id=done_indices.tolist())
+            if self.auto_reset:
+                new_initial_states = []
+                dummy_actions = []
 
-            for i, done_idx in enumerate(done_indices):
-                obs_list[done_idx] = obs[i]
-        
+                # Group done indices by their group_idx
+                group_state_mapping = {}
+                for i in done_indices:
+                    group_idx = i // self.group_size
+                    if group_idx not in group_state_mapping:
+                        # Sample a new state_id for this group
+                        env_idx = group_idx * self.group_size
+                        task_id = self.task_ids[env_idx % len(self.task_ids)]
+
+                        if self.state_sampler is not None:
+                            state_id = int(self.state_sampler(task_id=task_id, n_states=len(self.initial_states_list[env_idx])))
+                            state_id = max(0, min(state_id, len(self.initial_states_list[env_idx]) - 1))
+                        elif self.rand_init_state:
+                            state_id = np.random.randint(0, len(self.initial_states_list[env_idx]))
+                        else:
+                            state_id = self.current_state_indices[env_idx] % len(self.initial_states_list[env_idx])
+                            self.current_state_indices[env_idx] += 1
+
+                        group_state_mapping[group_idx] = state_id
+
+                # Assign states to done environments based on their group
+                for i in done_indices:
+                    group_idx = i // self.group_size
+                    state_id = group_state_mapping[group_idx]
+                    task_id = self.task_ids[i % len(self.task_ids)]
+
+                    new_initial_states.append(self.initial_states_list[i][state_id])
+                    self.current_task_state_pairs[i] = (task_id, state_id)
+                    dummy_action = get_libero_dummy_action()
+                    dummy_actions.append(dummy_action)
+                self.envs.reset(id=done_indices.tolist())
+                obs = self.envs.set_init_state(new_initial_states, id=done_indices.tolist())
+
+                for _ in range(self.num_steps_wait):
+                    obs, _, _, _ = self.envs.step(dummy_actions, id=done_indices.tolist())
+
+                for i, done_idx in enumerate(done_indices):
+                    obs_list[done_idx] = obs[i]
+
+                for i in done_indices:
+                    self.step_counts[i] = 0
+
+        self._done_mask = dones
+        self._last_obs_list = obs_list
+
         pixel_values = []
         prompts = []
         for i, obs in enumerate(obs_list):
@@ -229,7 +338,7 @@ class LiberoVecEnv(gym.Env):
             pixel_values.append(img)
             prompts.append(self.task_descriptions[i])
         img_list, prompt_list = preprocess_input_batch(
-            pixel_values, prompts, 
+            pixel_values, prompts,
             pre_thought_list=None, center_crop=True
         )
         env_output = EnvOutput(pixel_values=img_list, prompts=prompt_list)
@@ -240,9 +349,6 @@ class LiberoVecEnv(gym.Env):
         }
         truncated = np.array([False] * self.num_envs)
 
-        for i, done in enumerate(dones):
-            if done:
-                self.step_counts[i] = 0
         return env_output, np.array(rewards), np.array(dones), truncated, info
 
     def is_eval_complete(self) -> bool:

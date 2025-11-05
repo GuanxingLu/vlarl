@@ -31,7 +31,7 @@ fi
 # 2 GPUs, one for vLLM, one for env
 if [ ${EVAL} = True ]; then
   echo "3. Evaluating the merged model"
-  CUDA_VISIBLE_DEVICES=$GPUS /opt/conda/envs/vlarl/bin/python run_libero_eval_vllm.py \
+  CUDA_VISIBLE_DEVICES=$GPUS python run_libero_eval_vllm.py \
     --model_family openvla \
     --pretrained_checkpoint "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
     --local_log_dir debug \

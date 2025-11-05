@@ -29,8 +29,8 @@ export MUJOCO_GL=egl
 # export MUJOCO_GL=osmesa
 
 # data
-# POSTFIX=spatial
-POSTFIX=goal
+POSTFIX=spatial
+# POSTFIX=goal
 # POSTFIX=object
 # POSTFIX=10
 DATA_NAME=libero_${POSTFIX}
@@ -41,17 +41,17 @@ DATA_ROOT=${DATA_NAME}_no_noops
 # local_rollout_batch_size=10
 
 # Total H20 GPUs (full)
-per_device_train_batch_size=8   # zero2
+# per_device_train_batch_size=8   # zero2
 # per_device_train_batch_size=4   # ddp
-local_rollout_batch_size=10
+# local_rollout_batch_size=10
 
 # Total 2 A100 GPUs
 # per_device_train_batch_size=16
 # local_rollout_batch_size=10
 
 # Total 8 3090 GPUs
-# per_device_train_batch_size=1
-# local_rollout_batch_size=1
+per_device_train_batch_size=1
+local_rollout_batch_size=1
 
 # GPU allocation
 # GPUS=${1:-"0,1,2,3,4,5,6,7"}    # 8 GPUs
@@ -62,9 +62,8 @@ NUM_GPUS=$(echo $GPUS | tr ',' '\n' | wc -l)
 ACTOR_GPUS=$((NUM_GPUS - 1))    # the last GPU is used for vllm
 TOTAL_TASKS=$((ACTOR_GPUS * local_rollout_batch_size))
 
-# TASK_IDS=${2:-$(printf "0,%.0s" $(seq 1 $((TOTAL_TASKS))))} # Repeat 0 TOTAL_TASKS-1 times
-# TASK_IDS=${TASK_IDS%,} # Remove tailing comma
-TASK_IDS=${2:-"0,1,2,3,4,5,6,7,8,9"}    # All tasks
+TASK_IDS=${2:-"1"}    # Example for debugging
+# TASK_IDS=${2:-"0,1,2,3,4,5,6,7,8,9"}    # All tasks
 
 echo "GPUS=${GPUS}"
 echo "TASK_SUITE_NAME=${DATA_NAME}"
@@ -74,9 +73,8 @@ echo "ACTOR_GPUS=${ACTOR_GPUS}"
 echo "per_device_train_batch_size=${per_device_train_batch_size}"
 echo "local_rollout_batch_size=${local_rollout_batch_size}"
 
-# CUDA_VISIBLE_DEVICES=$GPUS python \
-CUDA_VISIBLE_DEVICES=$GPUS /opt/conda/envs/vlarl/bin/python \
-    ppo_vllm_ray_fsdp_v3.py \
+CUDA_VISIBLE_DEVICES=$GPUS python \
+    grpo_vllm_ray_fsdp.py \
     --pretrained_checkpoint "MODEL/openvla-7b-finetuned-libero-${POSTFIX}" \
     --data_root_dir ./data/modified_libero_rlds \
     --dataset_name ${DATA_ROOT} \
@@ -84,8 +82,8 @@ CUDA_VISIBLE_DEVICES=$GPUS /opt/conda/envs/vlarl/bin/python \
     --num_trials_per_task 50 \
     --eval_num_trials_per_task 5 \
     --task_ids "[${TASK_IDS}]" \
-    --run_root_dir "checkpoints/${DATA_ROOT}/root" \
-    --adapter_tmp_dir "checkpoints/${DATA_ROOT}/adapter" \
+    --run_root_dir "checkpoints/debug/root" \
+    --adapter_tmp_dir "checkpoints/debug/adapter" \
     --per_device_train_batch_size ${per_device_train_batch_size} \
     --local_mini_batch_size ${per_device_train_batch_size} \
     --local_rollout_batch_size ${local_rollout_batch_size} \
@@ -93,39 +91,39 @@ CUDA_VISIBLE_DEVICES=$GPUS /opt/conda/envs/vlarl/bin/python \
     --actor_num_gpus_per_node "[${ACTOR_GPUS}]" \
     --temperature 1.7 \
     --num_epochs 1 \
-    --value_init_steps 3 \
     --learning_rate 8e-6 \
-    --value_learning_rate 5e-5 \
     --policy_max_grad_norm 1.0 \
-    --value_max_grad_norm 1.0 \
     --cliprange_high 0.4 \
     --cliprange_low 0.2 \
-    --gamma 1.0 \
     --penalty_reward_value -1.0 \
-    --num_steps 128 \
+    --num_steps 2 \
+    --max_env_length 2 \
     --total_episodes 100000 \
     --vllm_tensor_parallel_size 1 \
     --vllm_enforce_eager True \
     --enable_prefix_caching False \
     --gpu_memory_utilization 0.9 \
-    --use_lora False \
+    --use_lora True \
     --enable_gradient_checkpointing False \
     --sharding_strategy "shard-grad-op" \
     --offload False \
-    --use_value_model True \
-    --value_model_type "vla" \
-    --value_use_lora False \
-    --clip_vloss False \
-    --norm_adv True \
+    --norm_adv False \
+    --use_baseline True \
+    --baseline_momentum 0.9 \
+    --kl_coef 0.0 \
+    --entropy_bonus 0.0 \
+    --nonneg_adv False \
+    --clip_ploss True \
     --use_curriculum False \
     --curriculum_temp 1.0 \
     --curriculum_min_prob 0.0 \
     --save_freq 10 \
     --eval_freq 10 \
-    --init_eval True \
+    --init_eval False \
     --save_video True \
-    --use_wandb True \
+    --use_wandb False \
     --wandb_offline False \
     --wandb_project openvla \
     --wandb_entity openvla_cvpr \
-    --debug False
+    --debug True
+

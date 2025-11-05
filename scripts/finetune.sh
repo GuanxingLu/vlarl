@@ -2,7 +2,7 @@
 
 DATA_ROOT=libero_spatial_no_noops
 
-CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --standalone --nnodes 1 --nproc-per-node 4 vla-scripts/finetune.py \
+CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --standalone --nnodes 1 --nproc-per-node 4 finetune.py \
   --vla_path ./openvla-7b \
   --data_root_dir ./data/real_world_ntu_rlds \
   --dataset_name ${DATA_ROOT} \
