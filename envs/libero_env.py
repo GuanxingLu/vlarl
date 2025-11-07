@@ -3,6 +3,7 @@ import time
 import numpy as np
 # import gymnasium as gym
 import gym
+import logging
 from typing import Dict, Any, Tuple, List, Optional
 from PIL import Image
 from libero.libero import benchmark, get_libero_path
@@ -15,7 +16,10 @@ from experiments.robot.libero.libero_utils import (
 )
 from experiments.robot.openvla_utils import preprocess_input_batch
 from experiments.robot.robot_utils import normalize_gripper_action, invert_gripper_action
+from utils.logging_utils import init_logger
 
+logger = init_logger(__name__)
+logging.getLogger("imageio_ffmpeg").setLevel(logging.ERROR)
 
 class LiberoVecEnv(gym.Env):
     def __init__(
@@ -79,6 +83,7 @@ class LiberoVecEnv(gym.Env):
         
         cuda_visible_devices = os.environ.pop("CUDA_VISIBLE_DEVICES", None)
         gpus = [int(x) for x in cuda_visible_devices.split(",")] if cuda_visible_devices else [0]
+        logger.info(f"{gpus=}")
 
         env_creators = []
         for i in range(self.num_envs):
@@ -97,11 +102,12 @@ class LiberoVecEnv(gym.Env):
                 task.problem_folder,
                 task.bddl_file
             )
+            cur_gpu = gpus[i % len(gpus)]
             env_args = {
                 "bddl_file_name": bddl_file,
                 "camera_heights": resolution,
                 "camera_widths": resolution,
-                "render_gpu_device_id": gpus[i % len(gpus)],
+                "render_gpu_device_id": cur_gpu,
                 "seed": int(seed),
             }
 

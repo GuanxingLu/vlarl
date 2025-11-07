@@ -387,7 +387,7 @@ def calculate_runtime_args(args: Args,):
     args.train_batch_size = int(args.local_rollout_batch_size * args.num_steps)
     args.num_mini_batches = exact_div(args.rollout_batch_size * args.num_steps, args.mini_batch_size)
 
-    # PPO logic: do checks and set up dataloader batch size
+    # GRPO logic: do checks and set up dataloader batch size
     # if args.whiten_rewards:
     #     assert (
     #         args.local_mini_batch_size >= 8
@@ -403,7 +403,7 @@ def calculate_runtime_args(args: Args,):
     logger.info(f"[Args] task_ids: {args.task_ids}")
 
     exp_id = (
-        f"ppo+{args.dataset_name}"
+        f"grpo+{args.dataset_name}"
         f"+tasks{np.unique(args.task_ids).size}"
         f"+trials{args.num_trials_per_task}"
         f"+ns{args.num_steps}"
@@ -795,7 +795,7 @@ class PolicyTrainerRayProcess(RayProcess):
         vllm_engines: List[ray.actor.ActorHandle],
         metrics_queue: Queue,
     ):
-        """Main training loop for GRPO (Group Relative Policy Optimization) / PPO"""
+        """Main training loop"""
         logger.info("Starting training loop")
         torch.set_printoptions(precision=6, sci_mode=False)
 
@@ -1686,7 +1686,7 @@ class ModelGroup:
 
 @draccus.wrap()
 def main(args: Args):
-    logger.info(f"PPO Fine-tuning OpenVLA Model `{args.pretrained_checkpoint}` on `{args.dataset_name}`")
+    logger.info(f"GRPO Fine-tuning OpenVLA Model `{args.pretrained_checkpoint}` on `{args.dataset_name}`")
 
     calculate_runtime_args(args)
 

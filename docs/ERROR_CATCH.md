@@ -43,8 +43,9 @@ sudo apt-get install libglfw3 libglew2.0 libgl1-mesa-glx libosmesa6
 
 # Otherwise:
 conda install -c conda-forge glew
-conda install -c conda-forge mesalib
-conda install -c anaconda mesa-libgl-cos6-x86_64
+conda install -c conda-forge mesalib==17.3.9
+# conda install -c anaconda mesa-libgl-cos6-x86_64
+conda install -c anaconda mesa-libegl-cos6-x86_64
 conda install -c menpo glfw3
 
 export MUJOCO_GL=egl
@@ -52,6 +53,12 @@ export PYOPENGL_PLATFORM=egl
 
 # test
 python test/test_libero.py
+```
+
+- egl-probe:
+Downgrade cmake to <4.0 to avoid build issues.
+```bash
+pip install cmake==3.24.3
 ```
 
 - vllm error: Fatal Python error: Floating point exception

@@ -33,6 +33,7 @@ classifiers = [
 ]
 dependencies = [
     "accelerate",
+    "cmake==3.24.3",
     "draccus",
     "einops",
     "huggingface_hub",

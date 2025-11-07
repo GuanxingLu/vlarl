@@ -43,10 +43,14 @@ pip install -e .
 mkdir -p MODEL/; cd MODEL/
 # e.g., LIBERO-Spatial
 git lfs clone https://huggingface.co/openvla/openvla-7b-finetuned-libero-spatial
+# or use huggingface-cli
+hf download openvla/openvla-7b-finetuned-libero-spatial --local-dir $(pwd)/openvla-7b-finetuned-libero-spatial
 
 # Download LIBERO SFT dataset
 mkdir -p data/; cd data/
 git lfs clone https://huggingface.co/datasets/openvla/modified_libero_rlds
+# or use huggingface-cli
+hf download openvla/modified_libero_rlds --repo-type dataset --local-dir $(pwd)/modified_libero_rlds
 
 # Set up Weights & Biases for experiment logging
 wandb login
