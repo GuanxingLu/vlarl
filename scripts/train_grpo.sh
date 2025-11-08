@@ -30,9 +30,14 @@
 export MESA_GL_VERSION_OVERRIDE=4.1
 export PYOPENGL_PLATFORM=egl
 export MUJOCO_GL=egl
-# export MUJOCO_GL=glx
-# export MUJOCO_GL=glfw
-# export MUJOCO_GL=osmesa
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+export LIBGL_ALWAYS_SOFTWARE=1
+# NOTE: set LIBERO_REPO_PATH to the path of the LIBERO repo
+export LIBERO_REPO_PATH=~/LIBERO
+export LIBERO_CONFIG_PATH=${LIBERO_REPO_PATH}
+export PYTHONPATH=${LIBERO_REPO_PATH}:$PYTHONPATH
+
+export WANDB_API_KEY=fab158aa77d0a22d98d5ca0656237d0541c1bad0
 
 # data
 POSTFIX=spatial
@@ -44,39 +49,24 @@ DATA_ROOT=${DATA_NAME}_no_noops
 
 # Total H20 GPUs (lora)
 # per_device_train_batch_size=16
-# local_rollout_batch_size=10
 
 # Total H20 GPUs (full)
 # per_device_train_batch_size=8   # zero2
-# per_device_train_batch_size=4   # ddp
-# local_rollout_batch_size=10
-
-# Total 2 A100 GPUs
-# per_device_train_batch_size=16
-# local_rollout_batch_size=10
-
-# Total 8 3090 GPUs
-per_device_train_batch_size=1
-local_rollout_batch_size=2
+per_device_train_batch_size=4   # ddp
 local_num_groups=1
-local_group_size=2
+local_group_size=8
 
 # GPU allocation
-# GPUS=${1:-"0,1,2,3,4,5,6,7"}    # 8 GPUs
-GPUS=${1:-"0,1,2,3"}    # 4 GPUs
+GPUS=0,1
 MASTER_ADDR=localhost
 MASTER_PORT=12345
 NUM_GPUS=$(echo $GPUS | tr ',' '\n' | wc -l)
 ACTOR_GPUS=$((NUM_GPUS - 1))    # the last GPU is used for vllm
 
-TASK_IDS=${2:-"1"}    # Example for debugging
-# TASK_IDS=${2:-"0,1,2,3,4,5,6,7,8,9"}    # All tasks
-# replicate task_ids
+TASK_IDS="1"
 
-echo "GPUS=${GPUS}"
-echo "TASK_SUITE_NAME=${DATA_NAME}"
-echo "TASK_IDS=${TASK_IDS}"
-echo "ACTOR_GPUS=${ACTOR_GPUS}"
+mkdir -p logs
+NOW=$(date +%Y%m%d_%H%M%S)
 
 CUDA_VISIBLE_DEVICES=$GPUS python \
     grpo_vllm_ray_fsdp.py \
@@ -107,14 +97,12 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --vllm_tensor_parallel_size 1 \
     --vllm_enforce_eager True \
     --enable_prefix_caching False \
-    --gpu_memory_utilization 0.9 \
+    --gpu_memory_utilization 0.5 \
     --use_lora True \
     --enable_gradient_checkpointing False \
     --sharding_strategy "full-shard" \
     --offload False \
-    --norm_adv False \
-    --use_baseline True \
-    --baseline_momentum 0.9 \
+    --norm_adv True \
     --kl_coef 0.0 \
     --entropy_bonus 0.0 \
     --nonneg_adv False \
@@ -126,8 +114,9 @@ CUDA_VISIBLE_DEVICES=$GPUS python \
     --eval_freq 100 \
     --init_eval False \
     --save_video True \
-    --use_wandb False \
+    --use_wandb True \
     --wandb_offline False \
     --wandb_project openvla \
     --wandb_entity openvla_cvpr \
-    --debug True
+    --debug False \
+    2>&1 | tee logs/$vlarl_{NOW}.log

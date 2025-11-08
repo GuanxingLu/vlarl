@@ -68,6 +68,11 @@ Ref: https://github.com/vllm-project/vllm/issues/4392
 pip install nvidia-cublas-cu12==12.4.5.8
 ```
 
+- transformers error: /lib64/libc.so.6: version `GLIBC_2.32' not found
+```bash
+conda install -c conda-forge gcc
+```
+
 - Bad network case
 Revise config.json:
 ```json

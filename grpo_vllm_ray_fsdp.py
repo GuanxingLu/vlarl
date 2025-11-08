@@ -294,10 +294,6 @@ class Args:
     """the clip range (low)"""
     norm_adv: bool = False
     """Toggles advantages normalization"""
-    use_baseline: bool = True
-    """whether to use baseline for advantage computation (GRPO style)"""
-    baseline_momentum: float = 0.9
-    """momentum for exponential moving average of baseline"""
     kl_coef: float = 0.0
     """coefficient for KL divergence loss"""
     entropy_bonus: float = 0.0
@@ -1353,28 +1349,24 @@ class PolicyTrainerRayProcess(RayProcess):
                 torch.cuda.empty_cache()
         
             # Compute advantages and returns using GRPO
-            mean_return = torch.tensor(0.0, device=device)
             with torch.no_grad() and timer.timer("advantage"):
+                # Compute episode mask (valid timesteps before first done)
+                cumsum_dones = dones.to(dtype=torch.int64).cumsum(dim=0)    # [num_steps, local_rollout_batch_size]
+                episode_mask = (cumsum_dones == 0).to(dtype=torch.float32)  # [num_steps, local_rollout_batch_size]
+
                 returns_cumsum = torch.zeros(args.local_rollout_batch_size, device=device)
                 returns = torch.zeros_like(scores).to(device)
                 for t in reversed(range(args.num_steps)):
                     returns_cumsum = returns_cumsum * (1 - dones[t, :].float())
                     returns_cumsum += scores[t, :]
                     returns[t, :] = returns_cumsum
+                returns *= episode_mask
 
-                # Compute episode mask (valid timesteps before first done)
-                cumsum_dones = dones.to(dtype=torch.int64).cumsum(dim=0)    # [num_steps, local_rollout_batch_size]
-                episode_mask = (cumsum_dones == 0).to(dtype=torch.float32)  # [num_steps, local_rollout_batch_size]
+                grouped_returns_cumsum = returns_cumsum.view(args.local_num_groups, args.local_group_size)
+                grouped_mean = grouped_returns_cumsum.mean(dim=1, keepdim=True)  # [num_groups, 1]
 
-                valid_returns = returns * episode_mask  # [num_steps, local_rollout_batch_size]
-                num_valid = episode_mask.sum()
-                if num_valid > 0:
-                    mean_return = valid_returns.sum() / num_valid
-                baseline = mean_return.item()
-
-                grouped_returns = returns.view(args.num_steps, -1, args.group_size) # [num_steps, num_groups, group_size]
-                grouped_mean = grouped_returns.mean(dim=2, keepdim=True)  # [num_steps, num_groups, 1]
-                grouped_advantages = (grouped_returns - grouped_mean)
+                grouped_returns = returns.view(args.num_steps, args.local_num_groups, args.local_group_size)  # [num_steps, num_groups, group_size]
+                grouped_advantages = grouped_returns - grouped_mean.unsqueeze(0)  # [num_steps, num_groups, group_size]
 
                 advantages = grouped_advantages.view(args.num_steps, args.local_rollout_batch_size) * episode_mask
 
@@ -1390,51 +1382,60 @@ class PolicyTrainerRayProcess(RayProcess):
             b_advantages = advantages.reshape(-1)
             b_returns = returns.reshape(-1)
 
-            # logger.info(f"{scores.shape=}, {scores.transpose(0,1)=}")
-            # logger.info(f"{dones.shape=}, {dones.transpose(0,1)=}")
-            # logger.info(f"{returns.shape=}, {returns.transpose(0,1)=}")
-            # logger.info(f"{advantages.shape=}, {advantages.transpose(0,1)=}")
+            if accelerator.is_main_process:
+                logger.info(f"{scores.shape=}, {scores.transpose(0,1)=}")
+                logger.info(f"{dones.shape=}, {dones.transpose(0,1)=}")
+                logger.info(f"{returns.shape=}, {returns.transpose(0,1)=}")
+                logger.info(f"{advantages.shape=}, {advantages.transpose(0,1)=}")
 
-            # Filter valid samples (non-zero advantages) for GRPO
             N_total = b_advantages.shape[0]
             nonzero_adv_mask = (b_advantages != 0.0)
             valid_indices = torch.nonzero(nonzero_adv_mask, as_tuple=True)[0]
             N_valid = valid_indices.shape[0]
-            # if accelerator.is_main_process:
-            #     logger.info(f"[GRPO] Sampling from {N_valid}/{N_total} valid transitions (efficiency: {100*N_valid / N_total:.1f}%)")
-            # if N_valid > args.mini_batch_size:
-            #     b_queries = b_queries[valid_indices]
-            #     b_pixel_values = b_pixel_values[valid_indices]
-            #     b_responses = b_responses[valid_indices]
-            #     b_logprobs = b_logprobs[valid_indices]
-            #     b_advantages = b_advantages[valid_indices]
-            #     b_returns = b_returns[valid_indices]
-            #     args.train_batch_size = N_valid
-            # else:
-            #     logger.warning("[GRPO] No valid advantages found, skipping training step")
+
+            if accelerator.is_main_process:
+                logger.info(f"[GRPO] Sampling from {N_valid}/{N_total} valid transitions (efficiency: {100*N_valid / N_total:.1f}%)")
+            
+            # N_valid_tensor = torch.tensor(N_valid, device=device)
+            # dist.all_reduce(N_valid_tensor, op=dist.ReduceOp.SUM)
+            # total_valid_samples = N_valid_tensor.item()
+            # if total_valid_samples == 0:
+            #     logger.warning(f"[GRPO] No valid advantages found on any rank, skipping training step {training_step}")
+            #     dist.barrier()
             #     continue
+
+            if N_valid > args.per_device_train_batch_size:
+                b_queries = b_queries[valid_indices]
+                b_pixel_values = b_pixel_values[valid_indices]
+                b_responses = b_responses[valid_indices]
+                b_logprobs = b_logprobs[valid_indices]
+                b_advantages = b_advantages[valid_indices]
+                b_returns = b_returns[valid_indices]
+                local_train_batch_size = N_valid
+            else:
+                local_train_batch_size = 0
 
             # Training phase
             log_gpu_memory_usage("[Training] Before training", rank=accelerator.process_index, logger=logger, level=logging.INFO)
             self.model.train()
             with timer.timer("train_loop"):
                 for epoch_idx in range(args.num_epochs):
-                    b_inds = np.random.permutation(args.train_batch_size)   
-                    # each thread has its own permutation, dealing with its own local rollout batch
+                    if local_train_batch_size == 0:
+                        break
+                    b_inds = np.random.permutation(local_train_batch_size)
                     minibatch_idx = 0
                     for mini_batch_start in range(
-                        0, args.train_batch_size, args.local_mini_batch_size
+                        0, max(local_train_batch_size, 1), args.local_mini_batch_size
                     ):
                         mini_batch_end = mini_batch_start + args.local_mini_batch_size
+                        mini_batch_end = min(mini_batch_end, local_train_batch_size)
                         mini_batch_inds = b_inds[mini_batch_start:mini_batch_end]
                         gradient_accumulation_idx = 0
-                        # TODO: gradient accumulation
-                        for micro_batch_start in range(0, args.local_mini_batch_size, args.per_device_train_batch_size):
-                            # logger.info(f"micro batch start: {micro_batch_start}")
+                        for micro_batch_start in range(0, len(mini_batch_inds), args.per_device_train_batch_size):
                             micro_batch_end = micro_batch_start + args.per_device_train_batch_size
+                            micro_batch_end = min(micro_batch_end, len(mini_batch_inds))
                             micro_batch_inds = mini_batch_inds[micro_batch_start:micro_batch_end]
                             mb_advantage = b_advantages[micro_batch_inds]
-                            # if args.norm_adv and mb_advantage.shape[0] >= 8:
                             if args.norm_adv:
                                 mb_advantage = (mb_advantage - mb_advantage.mean()) / (mb_advantage.std() + 1e-8)
                             mb_responses = b_responses[micro_batch_inds]
@@ -1538,7 +1539,7 @@ class PolicyTrainerRayProcess(RayProcess):
                 local_metrics["objective/scores_std"] = scores.std() if scores.shape[0] > 1 else torch.tensor(0, device=device)
                 local_metrics["objective/advantage_avg"] = advantages.mean()
                 local_metrics["objective/advantage_std"] = advantages.std() if advantages.shape[0] > 1 else torch.tensor(0, device=device)
-                local_metrics["objective/baseline"] = torch.tensor(baseline, device=device)
+                local_metrics["objective/baseline"] = grouped_mean.mean()
                 local_metrics["objective/valid_samples"] = torch.tensor(N_valid, device=device)
                 local_metrics["objective/sample_efficiency"] = torch.tensor(N_valid / N_total, device=device)
                 local_metrics["policy/approxkl_avg"] = approxkl_stats.mean()
