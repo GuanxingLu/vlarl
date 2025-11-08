@@ -46,18 +46,21 @@ init_state_id = 0
 env.set_init_state(init_states[init_state_id])
 
 dummy_action = [0.] * 7
-for step in range(10):
+# for step in range(10):
+for step in range(100000000):
     # action = dummy_action
     action = np.random.uniform(0, 1, size=(7,)).tolist()
     obs, reward, done, info = env.step(action)
     img = get_libero_image(obs)
+
+    print(f"{step:02d} - action: {action}, reward: {reward}, done: {done}, info: {info}")
     
-    if step % 5 == 0:
-        pil_img = Image.fromarray(img)
-        img_filename = f"libero_step_{step:02d}.png"
-        img_path = os.path.join(os.path.dirname(__file__), img_filename)
-        pil_img.save(img_path)
-        print(f"Saved image for step {step} to {img_path}")
+    # if step % 5 == 0:
+    #     pil_img = Image.fromarray(img)
+    #     img_filename = f"libero_step_{step:02d}.png"
+    #     img_path = os.path.join(os.path.dirname(__file__), img_filename)
+    #     pil_img.save(img_path)
+    #     print(f"Saved image for step {step} to {img_path}")
 
 env.close()
 print("test_libero_env passed!")

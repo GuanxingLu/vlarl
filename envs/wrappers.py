@@ -180,7 +180,7 @@ class VideoWrapper(gym.Wrapper):
         os.makedirs(self.save_dir, exist_ok=True)
         mp4_path = os.path.join(
             self.save_dir,
-            f"task={env_idx}+rank={self.rank}+epi={self.total_episodes}+s={success}+"
+            f"env={env_idx}+rank={self.rank}+epi={self.total_episodes}+s={success}+"
             f"inst={processed_task_description}.mp4"
         )
         save_rollout_video(
